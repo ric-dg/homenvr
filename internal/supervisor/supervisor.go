@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/ric-dg/homenvr/internal/config"
+	"github.com/ric-dg/homenvr/internal/retention"
+	"github.com/ric-dg/homenvr/internal/watchdog"
 )
 
 // Supervisor owns the long-running child processes: go2rtc (whose exec
@@ -52,8 +55,22 @@ func (s *Supervisor) Log() *ServiceLog { return s.log }
 func (s *Supervisor) Cfg() *config.Config { return s.cfg.Get() }
 
 // Run supervises until ctx is cancelled. Ticks every 5 seconds, as in v1.
+// It also runs the watchdog and retention loops as goroutines.
 func (s *Supervisor) Run(ctx context.Context) error {
 	s.log.Logf("supervisor running (config=%s, yaml=%s)", s.ConfigPath, s.YAMLPath)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		s.runWatchdog(ctx)
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		s.runRetention(ctx)
+	}()
+
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -61,10 +78,61 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			s.Shutdown()
+			wg.Wait()
 			return ctx.Err()
 		case <-ticker.C:
 		}
 	}
+}
+
+// runWatchdog starts the health monitor, logging alerts to alert.log.
+func (s *Supervisor) runWatchdog(ctx context.Context) {
+	cfg := s.cfg.Get()
+	alert, err := NewRotatingLog(cfg.Paths.LogDir, "alert.log", cfg.Log.MaxMB, cfg.Log.Keep)
+	if err != nil {
+		s.log.Logf("watchdog: alert log: %v", err)
+		return
+	}
+	w := watchdog.New(s.cfg, alert)
+	s.log.Logf("watchdog started")
+	w.Run(ctx)
+	s.log.Logf("watchdog stopped")
+}
+
+// runRetention deletes recordings older than record.retain_hours, running
+// every 600 seconds as in v1.
+func (s *Supervisor) runRetention(ctx context.Context) {
+	ticker := time.NewTicker(600 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			s.retentionOnce(now)
+		}
+	}
+}
+
+func (s *Supervisor) retentionOnce(now time.Time) {
+	cfg := s.cfg.Get()
+	seen := map[string]bool{}
+	var dirs []string
+	for _, cam := range cfg.Cameras {
+		if cam.Record.OutDir == "" || seen[cam.Record.OutDir] {
+			continue
+		}
+		seen[cam.Record.OutDir] = true
+		dirs = append(dirs, cam.Record.OutDir)
+		if cfg.Record.Mode == "combined" {
+			combined := filepath.Join(cam.Record.OutDir, "combined")
+			if !seen[combined] {
+				seen[combined] = true
+				dirs = append(dirs, combined)
+			}
+		}
+	}
+	retention.Run(func(msg string) { s.log.Logf("%s", msg) }, dirs, cfg.Record.RetainHours, now)
 }
 
 func (s *Supervisor) tick(ctx context.Context) {

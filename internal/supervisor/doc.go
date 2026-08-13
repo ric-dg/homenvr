@@ -3,10 +3,11 @@
 // increments, the feed processes for mic capture, motion gating and event
 // recording.
 //
-// Responsibilities (mirroring v1 run.ps1):
+// Responsibilities (mirroring v1 run.ps1 + watchdog.py):
 //   - generate go2rtc.yaml from the effective config,
 //   - restart go2rtc when the relevant config subset changes (GenHash),
 //   - crash detection and restart,
+//   - run the watchdog and retention loops,
 //   - log rotation for managed logs,
 //   - clean shutdown ordering on stop.
 package supervisor

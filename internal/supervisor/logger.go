@@ -14,6 +14,7 @@ import (
 type ServiceLog struct {
 	mu   sync.Mutex
 	dir  string
+	file string
 	f    *os.File
 	max  int64
 	keep int
@@ -21,10 +22,16 @@ type ServiceLog struct {
 
 // NewServiceLog opens (creating if needed) service.log under dir.
 func NewServiceLog(dir string, maxMB, keep int) (*ServiceLog, error) {
+	return NewRotatingLog(dir, "service.log", maxMB, keep)
+}
+
+// NewRotatingLog opens (creating if needed) one rotating log file (e.g.
+// service.log or alert.log) under dir.
+func NewRotatingLog(dir, name string, maxMB, keep int) (*ServiceLog, error) {
 	if keep < 1 {
 		keep = 1
 	}
-	l := &ServiceLog{dir: dir, max: int64(maxMB) * 1024 * 1024, keep: keep}
+	l := &ServiceLog{dir: dir, file: name, max: int64(maxMB) * 1024 * 1024, keep: keep}
 	if err := l.open(); err != nil {
 		return nil, err
 	}
@@ -78,7 +85,7 @@ func (l *ServiceLog) open() error {
 	if err := os.MkdirAll(l.dir, 0o755); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(filepath.Join(l.dir, "service.log"),
+	f, err := os.OpenFile(filepath.Join(l.dir, l.file),
 		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
@@ -103,7 +110,7 @@ func (l *ServiceLog) rotateLocked() {
 		return
 	}
 	l.closeLocked()
-	path := filepath.Join(l.dir, "service.log")
+	path := filepath.Join(l.dir, l.file)
 	for i := l.keep - 1; i >= 1; i-- {
 		src := fmt.Sprintf("%s.%d", path, i)
 		dst := fmt.Sprintf("%s.%d", path, i+1)

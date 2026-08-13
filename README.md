@@ -5,10 +5,10 @@ in Go. v1 (Python, v0.1.1) is complete and kept as the reference;
 v2 starts clean.
 
 **Status: foundation laid.** The `config` package is implemented and verified
-against v1 (dumps are structurally identical), and the supervisor generates
-`go2rtc.yaml` byte-identically to v1 and supervises the go2rtc process. The
-mic capture, motion gating, recorder, watchdog, retention and control panel
-are not yet implemented.
+against v1 (dumps are structurally identical); the supervisor generates
+`go2rtc.yaml` byte-identically to v1, supervises go2rtc, and runs the watchdog
+and retention loops. The mic capture, motion gating, recorder and control
+panel are not yet implemented.
 
 ## Why a rewrite
 
