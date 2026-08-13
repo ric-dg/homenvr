@@ -1,11 +1,12 @@
-# HomeNVR v2 (scaffold)
+# HomeNVR v2 (work in progress)
 
 Cross-platform rewrite of [HomeNVR v1](https://github.com/ric-dg/homenvr-v1)
 in Go. v1 (Python, v0.1.1) is complete and kept as the reference;
 v2 starts clean.
 
-**Status: scaffold only.** No features implemented yet. This repo documents
-the intended architecture and conventions; nothing here runs a camera.
+**Status: foundation laid.** The `config` package is implemented and verified
+against v1 (dumps are structurally identical); the daemon, supervisor,
+watchdog, motion gating and control panel are not yet implemented.
 
 ## Why a rewrite
 
@@ -37,6 +38,13 @@ go build ./...
 go vet ./...
 go test ./...
 go build -o homenvrd.exe ./cmd/homenvrd
+```
+
+Useful right now:
+
+```powershell
+homenvrd.exe -dump-config -config path\to\config.jsonc   # effective config as JSON
+homenvrd.exe -validate-config -config path\to\config.jsonc
 ```
 
 Cross-compile (no CGO):
