@@ -13,13 +13,13 @@ import (
 var _ probes = (*Watcher)(nil)
 
 type fakeProbes struct {
-	ports map[int]bool
-	api   bool
+	ports  map[int]bool
+	api    bool
 	stream map[string]bool
 }
 
 func (f fakeProbes) portOK(port int) bool { return f.ports[port] }
-func (f fakeProbes) go2rtcAPI(int) bool    { return f.api }
+func (f fakeProbes) go2rtcAPI(int) bool   { return f.api }
 func (f fakeProbes) go2rtcStream(_ int, name string) bool {
 	return f.stream[name]
 }

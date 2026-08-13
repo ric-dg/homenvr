@@ -12,6 +12,7 @@ import (
 
 	"github.com/ric-dg/homenvr/internal/config"
 	"github.com/ric-dg/homenvr/internal/supervisor"
+	"github.com/ric-dg/homenvr/internal/web"
 )
 
 // version is the v2 development version. Real releases follow v0.1.x from v1.
@@ -71,6 +72,20 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	panel := web.New(svc.CfgFile(), web.Options{
+		ConfigPath: *configPath,
+		Status:     svc,
+		Log:        svc.Log(),
+		Version:    version,
+		OnShutdown: stop,
+	})
+	go func() {
+		if err := panel.Start(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "homenvrd: web: %v\n", err)
+		}
+	}()
+
 	if err := svc.Run(ctx); err != nil && err != context.Canceled {
 		fmt.Fprintf(os.Stderr, "homenvrd: %v\n", err)
 		os.Exit(1)

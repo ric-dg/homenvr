@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HomeNVR</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>HomeNVR</h1>
+  <nav>
+    <button class="tab active" data-tab="status">Status</button>
+    <button class="tab" data-tab="recordings">Recordings</button>
+    <button class="tab" data-tab="config">Config</button>
+  </nav>
+  <a class="live" target="_blank" rel="noopener" href="#" id="live-link">Live view</a>
+</header>
+
+<main>
+  <section id="tab-status" class="panel active"></section>
+  <section id="tab-recordings" class="panel">
+    <div id="rec-list"></div>
+    <video id="player" controls hidden></video>
+  </section>
+  <section id="tab-config" class="panel">
+    <div class="toolbar">
+      <button id="cfg-save">Save &amp; reload</button>
+      <button id="cfg-reload">Revert</button>
+      <span id="cfg-msg"></span>
+    </div>
+    <textarea id="cfg-text" spellcheck="false"></textarea>
+  </section>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>

@@ -1,7 +1,4 @@
-// Package motion implements motion and sound gating for recordings.
-//
-// It consumes go2rtc's JSON API (motion level per camera) and the mic
-// daemon's PCM stream to decide when an event starts and ends, and hands
-// triggered segments to the recorder. Mirrors v1's motion.py contract
-// including event filename timestamps and per-camera unique mic ports.
+// Package motion provides the two activity gates for event recording: a
+// background-subtraction motion detector fed by an ffmpeg rawvideo pipe, and
+// a sound trigger fed by the mic feeder's per-block RMS (ctl port).
 package motion

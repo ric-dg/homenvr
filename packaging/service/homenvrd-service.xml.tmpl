@@ -1,0 +1,11 @@
+<service>
+  <id>homenvrd</id>
+  <name>HomeNVR</name>
+  <description>HomeNVR daemon: go2rtc live streams, per-camera mic capture, motion/sound event recordings, retention and the web control panel.</description>
+  <executable>@EXE@</executable>
+  <arguments>-config "@CONFIG@" -yaml "@YAML@"</arguments>
+  <startmode>Automatic</startmode>
+  <onfailure action="restart" delay="10 sec"/>
+  <log mode="roll-by-size" sizeThreshold="10240" keepFiles="8"/>
+  <logpath>@LOGDIR@</logpath>
+</service>

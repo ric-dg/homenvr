@@ -26,16 +26,16 @@ func GenHash(cfg *config.Config) string {
 		CtlPort    int    `json:"ctl_port"`
 	}
 	type cam struct {
-		Name       string       `json:"name"`
-		Source     string       `json:"source"`
-		DeviceName string       `json:"device_name"`
-		RTSPURL    string       `json:"rtsp_url"`
-		Width      int          `json:"width"`
-		Height     int          `json:"height"`
-		FPS        int          `json:"fps"`
-		RTBufSize  string       `json:"rtbufsize"`
-		Live       config.Live  `json:"live"`
-		Mic        mic          `json:"mic"`
+		Name       string      `json:"name"`
+		Source     string      `json:"source"`
+		DeviceName string      `json:"device_name"`
+		RTSPURL    string      `json:"rtsp_url"`
+		Width      int         `json:"width"`
+		Height     int         `json:"height"`
+		FPS        int         `json:"fps"`
+		RTBufSize  string      `json:"rtbufsize"`
+		Live       config.Live `json:"live"`
+		Mic        mic         `json:"mic"`
 	}
 	rel := struct {
 		Go2rtc  config.Go2rtc `json:"go2rtc"`

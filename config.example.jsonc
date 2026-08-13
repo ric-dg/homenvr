@@ -1,0 +1,76 @@
+{
+  // HomeNVR v2 example config. Copy to config.jsonc and edit.
+  // JSONC: // and /* */ comments allowed. Unknown keys are ignored.
+  // Tools are auto-resolved (bundled copy, PATH, then scoop) when left "".
+
+  "go2rtc": {
+    "api_port": 1984,    // live web UI + go2rtc API
+    "rtsp_port": 8554,   // go2rtc RTSP relay
+    "webrtc_port": 8555
+  },
+
+  "gpu": {
+    "encoders": "auto"   // nvidia GPU index, or "auto"/"" for no -gpu flag
+  },
+
+  "record": {
+    "mode": "event",     // event | continuous | combined
+    "retain_hours": 72   // 0 = never delete
+  },
+
+  "paths": {
+    "log_dir": "logs",        // all logs (service, motion, recorder, watchdog, alerts)
+    "rtsp_host": "127.0.0.1"  // go2rtc host the daemon connects to
+  },
+
+  "log": { "level": "info", "max_mb": 10, "keep": 5 },
+
+  "monitor": {
+    "enabled": true,
+    "interval_sec": 10,
+    "alert_after_sec": 300,
+    "ntfy_topic": ""         // pushover/ntfy topic for watchdog alerts
+  },
+
+  "web": { "port": 8080 },   // embedded control panel (bind: 127.0.0.1)
+
+  "cameras": [
+    {
+      "name": "brio",
+      "source": "dshow",           // dshow (USB) or rtsp
+      "device_name": "Brio 100",
+      "rtsp_url": "",              // required when source = rtsp
+      "width": 1920, "height": 1080, "fps": 15,
+      "rtbufsize": "64M",
+      "live": {
+        "video": { "codec": "h264_nvenc", "preset": "p2", "tune": "ll", "rc": "vbr",
+                   "cq": 28, "crf": 24, "maxrate": "4M", "g": 15, "bf": 0 },
+        "audio": { "codec": "aac", "bitrate": "64k" }
+      },
+      "mic": {
+        "enabled": true,
+        "device_name": "Brio 100",
+        "sample_rate": 48000, "channels": 1, "block_size": 960, "gain": 8,
+        "live_port": 9010, "rec_port": 9011, "ctl_port": 9012
+      },
+      "motion": {
+        "enabled": true,
+        "width": 320, "height": 180, "fps": 10,
+        "threshold": 25, "min_pixels": 250, "bg_alpha": 0.05,
+        "post_roll_sec": 3.0, "event_cap_sec": 900.0, "restart_backoff_sec": 2.0
+      },
+      "sound": {
+        "enabled": true, "abs_floor": 250, "ratio": 3.0, "tau": 0.02,
+        "hold_blocks": 4, "drop_blocks": 30
+      },
+      "record": {
+        "enabled": true,
+        "prefix": "brio",
+        "out_dir": "E:\\CCTV",
+        "video": { "codec": "av1_nvenc", "preset": "p5", "rc": "vbr",
+                   "cq": 38, "crf": 34, "maxrate": "3M", "g": 30 },
+        "audio": { "codec": "aac", "bitrate": "64k" }
+      }
+    }
+  ]
+}

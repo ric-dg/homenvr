@@ -1,6 +1,6 @@
 //go:build windows
 
-package supervisor
+package proc
 
 import (
 	"os"
@@ -9,8 +9,8 @@ import (
 	"syscall"
 )
 
-// procAttrs returns nil on Windows; process trees are killed via taskkill.
-func procAttrs() *syscall.SysProcAttr { return nil }
+// attrs returns nil on Windows; process trees are killed via taskkill.
+func attrs() *syscall.SysProcAttr { return nil }
 
 // killTree terminates the process and its whole tree via taskkill /T /F.
 func killTree(p *os.Process) {

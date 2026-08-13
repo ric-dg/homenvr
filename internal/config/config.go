@@ -29,6 +29,12 @@ type Config struct {
 	Log     Log      `json:"log"`
 	Tools   Tools    `json:"tools"`
 	Monitor Monitor  `json:"monitor"`
+	Web     Web      `json:"web"`
+}
+
+// Web configures the embedded control panel server.
+type Web struct {
+	Port int `json:"port"`
 }
 
 type Go2rtc struct {
@@ -98,11 +104,23 @@ type Sound struct {
 }
 
 type CamRecord struct {
-	Enabled bool  `json:"enabled"`
+	Enabled bool   `json:"enabled"`
 	Prefix  string `json:"prefix"`
 	OutDir  string `json:"out_dir"`
-	Video   Video `json:"video"`
-	Audio   Audio `json:"audio"`
+	Video   Video  `json:"video"`
+	Audio   Audio  `json:"audio"`
+}
+
+// Camera returns the camera with the given name, or nil when no camera
+// matches. Unlike v1's camera_index (which falls back to 0), a missing camera
+// is a distinct "absent" state so callers can exit cleanly.
+func (c *Config) Camera(name string) *Camera {
+	for i := range c.Cameras {
+		if c.Cameras[i].Name == name {
+			return &c.Cameras[i]
+		}
+	}
+	return nil
 }
 
 // Camera is one entry of the "cameras" array.
@@ -203,7 +221,20 @@ func Defaults() Config {
 		Log:     Log{Level: "info", MaxMB: 10, Keep: 5},
 		Tools:   Tools{},
 		Monitor: Monitor{Enabled: true, IntervalSec: 10, AlertAfterSec: 300},
+		Web:     Web{Port: 8080},
 	}
+}
+
+// Parse parses JSONC text over the built-in defaults without touching disk or
+// resolving tool paths. It is used by the control panel to validate edits
+// before saving (Load is the disk-backed variant).
+func Parse(data []byte) (*Config, error) {
+	cfg := Defaults()
+	if err := unmarshalJSONC(data, &cfg); err != nil {
+		return nil, err
+	}
+	normalizeCameras(&cfg)
+	return &cfg, nil
 }
 
 // Load reads and merges path (JSONC) over the defaults, completes every camera

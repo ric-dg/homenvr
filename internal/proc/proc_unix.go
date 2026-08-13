@@ -1,15 +1,15 @@
 //go:build !windows
 
-package supervisor
+package proc
 
 import (
 	"os"
 	"syscall"
 )
 
-// procAttrs puts each child in its own process group so killTree can signal
-// the whole group.
-func procAttrs() *syscall.SysProcAttr {
+// attrs puts each child in its own process group so killTree can signal the
+// whole group.
+func attrs() *syscall.SysProcAttr {
 	return &syscall.SysProcAttr{Setpgid: true}
 }
 
