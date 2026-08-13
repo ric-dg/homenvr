@@ -1,12 +1,17 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
+	"path/filepath"
+	"syscall"
 
 	"github.com/ric-dg/homenvr/internal/config"
+	"github.com/ric-dg/homenvr/internal/supervisor"
 )
 
 // version is the v2 development version. Real releases follow v0.1.x from v1.
@@ -14,8 +19,10 @@ const version = "0.2.0-dev"
 
 func main() {
 	configPath := flag.String("config", "config.jsonc", "path to the JSONC config")
+	yamlPath := flag.String("yaml", "", "go2rtc.yaml output path (default: <config dir>/go2rtc.yaml)")
 	dump := flag.Bool("dump-config", false, "print the effective config as JSON and exit")
 	validate := flag.Bool("validate-config", false, "validate the config and exit")
+	genYAML := flag.Bool("gen-yaml", false, "print the go2rtc.yaml the supervisor would write and exit")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 
@@ -49,6 +56,23 @@ func main() {
 		return
 	}
 
-	fmt.Fprintln(os.Stderr, "homenvrd: daemon not yet implemented; use -dump-config or -validate-config")
-	os.Exit(1)
+	if *genYAML {
+		fmt.Print(supervisor.BuildYAML(cfg))
+		return
+	}
+
+	if *yamlPath == "" {
+		*yamlPath = filepath.Join(filepath.Dir(*configPath), "go2rtc.yaml")
+	}
+	svc, err := supervisor.New(*configPath, *yamlPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "homenvrd: %v\n", err)
+		os.Exit(1)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := svc.Run(ctx); err != nil && err != context.Canceled {
+		fmt.Fprintf(os.Stderr, "homenvrd: %v\n", err)
+		os.Exit(1)
+	}
 }
