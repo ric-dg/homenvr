@@ -1,15 +1,16 @@
-// Package mic captures each camera's microphone through ffmpeg (DirectShow
-// PCM on Windows) and fans the gained PCM out over TCP: live_port and
-// rec_port carry the audio blocks for go2rtc / recordings, ctl_port carries
-// one little-endian u16 RMS level per block for sound detection. It replaces
-// v1 mic_daemon.py without Python or sounddevice.
+// Package mic captures each camera's microphone and fans the gained PCM out
+// over TCP: live_port and rec_port carry the audio blocks for go2rtc /
+// recordings, ctl_port carries one little-endian u16 RMS level per block for
+// sound detection. On Windows the capture is native WASAPI (the Brio mic is
+// only exposed as a WASAPI endpoint, never as a DirectShow device, so the
+// ffmpeg -f dshow path cannot open it); other platforms fall back to an
+// ffmpeg PCM pipe. It replaces v1 mic_daemon.py without Python or sounddevice.
 package mic
 
 import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"io"
 	"math"
 	"net"
 	"strconv"
@@ -17,9 +18,16 @@ import (
 	"time"
 
 	"github.com/ric-dg/homenvr/internal/config"
-	"github.com/ric-dg/homenvr/internal/proc"
 	"github.com/ric-dg/homenvr/internal/sleepctx"
 )
+
+// captureSource is a raw s16le (config sample rate, mono) PCM producer. A
+// readBlock fills buf completely or returns an error that causes the feeder
+// to restart the capture, mirroring how a dying ffmpeg pipe restarted v1.
+type captureSource interface {
+	readBlock(buf []byte) error
+	close()
+}
 
 // Logger is the subset of logging the feeder needs.
 type Logger interface {
@@ -38,7 +46,7 @@ type Feeder struct {
 
 	mu        sync.Mutex
 	curKey    string
-	proc      *proc.Child
+	src       captureSource
 	listeners []net.Listener
 	clients   map[string]map[*client]bool
 	quit      chan struct{}
@@ -112,7 +120,7 @@ func (f *Feeder) Run(ctx context.Context) {
 			f.log.Logf("mic capture [%s] started device=%s ports=[live %d rec %d ctl %d] gain=%.1f",
 				f.name, mic.DeviceName, mic.LivePort, mic.RecPort, mic.CtlPort, mic.Gain)
 		}
-		if f.proc == nil || f.proc.Exited() {
+		if f.src == nil {
 			f.log.Logf("mic [%s] capture stream lost, restarting in 2s", f.name)
 			f.stopAll()
 			f.curKey = ""
@@ -121,7 +129,7 @@ func (f *Feeder) Run(ctx context.Context) {
 		}
 
 		block := make([]byte, mic.BlockSize*mic.Channels*2)
-		if _, err := io.ReadFull(f.proc.StdoutReader(), block); err != nil {
+		if err := f.src.readBlock(block); err != nil {
 			f.log.Logf("mic [%s] capture read failed: %v", f.name, err)
 			f.stopAll()
 			f.curKey = ""
@@ -143,20 +151,13 @@ func (f *Feeder) Run(ctx context.Context) {
 	}
 }
 
-// start spawns the ffmpeg capture and the three TCP servers.
+// start opens the capture source and the three TCP servers.
 func (f *Feeder) start(mic config.Mic) error {
 	if mic.DeviceName == "" {
 		return fmt.Errorf("mic device_name is empty")
 	}
-	argv := []string{
-		f.ffmpeg, "-hide_banner", "-loglevel", "error",
-		"-f", "dshow", "-i", "audio=" + mic.DeviceName,
-		"-ar", strconv.Itoa(mic.SampleRate),
-		"-ac", strconv.Itoa(mic.Channels),
-		"-f", "s16le", "pipe:1",
-	}
-	ch := proc.NewChild("daemon-"+f.name, f.logDir)
-	if err := ch.StartOpt(argv, proc.Options{Stdout: proc.StdoutPipe, Stderr: proc.StderrFile}); err != nil {
+	src, err := newCapture(f.cfg, f.name, f.log, f.ffmpeg, f.logDir, mic)
+	if err != nil {
 		return err
 	}
 	var lns []net.Listener
@@ -169,13 +170,13 @@ func (f *Feeder) start(mic config.Mic) error {
 			for _, l := range lns {
 				l.Close()
 			}
-			ch.Stop()
+			src.close()
 			return err
 		}
 		lns = append(lns, ln)
 		go f.acceptLoop(ln, p.kind)
 	}
-	f.proc = ch
+	f.src = src
 	f.listeners = lns
 	return nil
 }
@@ -184,9 +185,9 @@ func (f *Feeder) start(mic config.Mic) error {
 func (f *Feeder) stopAll() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.proc != nil {
-		f.proc.Stop()
-		f.proc = nil
+	if f.src != nil {
+		f.src.close()
+		f.src = nil
 	}
 	for _, l := range f.listeners {
 		l.Close()
