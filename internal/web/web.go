@@ -22,7 +22,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/ric-dg/homenvr/internal/config"
@@ -445,11 +444,6 @@ func tailLog(path string, max int) ([]byte, error) {
 // maxUpdateBytes caps the uploaded replacement binary (a Windows exe).
 const maxUpdateBytes = 200 << 20
 
-// DETACHED_PROCESS (0x00000008) creates the child without a console; not in
-// the stdlib syscall package, so defined here. The updater helper must
-// outlive the daemon process that spawns it.
-const detachedProcessFlag = 0x00000008
-
 func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	if s.opts.OnUpdate == nil {
 		writeErr(w, http.StatusNotImplemented, "update not wired")
@@ -526,7 +520,7 @@ func (s *Server) stageUpdate(newExe []byte, pwsh, target string) error {
 		"-File", script, "-NewExe", staged, "-TargetExe", target, "-Svc", svc)
 	cmd.Stdout = out
 	cmd.Stderr = out
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP | detachedProcessFlag}
+	detachCmd(cmd)
 	if err := cmd.Start(); err != nil {
 		os.Remove(staged)
 		os.Remove(script)

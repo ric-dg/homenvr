@@ -25,13 +25,22 @@ function el(tag, attrs, ...children) {
 }
 
 const tabButtons = [...document.querySelectorAll(".tab")];
+function activateTab(tab) {
+  const btn = tabButtons.find((b) => b.dataset.tab === tab);
+  if (!btn) return false;
+  tabButtons.forEach((b) => b.classList.toggle("active", b === btn));
+  document.querySelectorAll(".panel").forEach((p) =>
+    p.classList.toggle("active", p.id === "tab-" + btn.dataset.tab));
+  return true;
+}
 for (const btn of tabButtons) {
   btn.addEventListener("click", () => {
-    tabButtons.forEach((b) => b.classList.toggle("active", b === btn));
-    document.querySelectorAll(".panel").forEach((p) =>
-      p.classList.toggle("active", p.id === "tab-" + btn.dataset.tab));
+    activateTab(btn.dataset.tab);
+    history.replaceState(null, "", "#/" + btn.dataset.tab);
   });
 }
+// Deep links like http://host:8080/#/logs open the right tab.
+if (location.hash.startsWith("#/")) activateTab(location.hash.slice(2));
 
 function fmtSize(n) {
   if (n >= 1 << 30) return (n / (1 << 30)).toFixed(1) + " GB";
