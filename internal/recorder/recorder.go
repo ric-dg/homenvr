@@ -172,13 +172,16 @@ func (r *Recorder) eventCmd(cfg *config.Config, cam config.Camera, path string) 
 // before the trigger. Because the concat filter must re-encode, a "copy" codec
 // setting degrades to libx264 here (as in combined mode). Only the live portion
 // carries the drawtext timestamp label; pre-roll frames are left untouched.
-func (r *Recorder) preRollEventCmd(cfg *config.Config, cam config.Camera, path string, pre []string) []string {
-	hasAudio := cam.Mic.Enabled && audioAvailable(cam.Mic.RecPort)
+// hasAudio is the caller's live mic availability probe result.
+func (r *Recorder) preRollEventCmd(cfg *config.Config, cam config.Camera, path string, pre []string, hasAudio bool) []string {
 	cmd := r.base(cfg, cam)
 	for _, f := range pre {
 		cmd = append(cmd, "-i", f)
 	}
 	mic := len(pre) + 1
+	if hasAudio {
+		cmd = append(cmd, audioInputArgs(cam.Mic)...)
+	}
 
 	fps := cam.FPS
 	if fps <= 0 {
@@ -452,8 +455,11 @@ func (r *Recorder) runEvent(ctx context.Context) error {
 		path := filepath.Join(cam.Record.OutDir, name)
 		var rc *proc.Child
 		if pre := ring.files(); len(pre) > 0 {
-			rc = r.spawn(cam.Name, r.preRollEventCmd(cfg, *cam, path, pre))
+			r.log.Logf("pre-roll: splicing %d segment(s) into %s", len(pre), name)
+			hasAudio := cam.Mic.Enabled && audioAvailable(cam.Mic.RecPort)
+			rc = r.spawn(cam.Name, r.preRollEventCmd(cfg, *cam, path, pre, hasAudio))
 		} else {
+			r.log.Logf("pre-roll: no segments (ring=%v, pre_roll_sec=%d) -> live-only %s", ring != nil, cam.Record.PreRollSec, name)
 			rc = r.spawnEvent(cfg, *cam, path)
 		}
 		if rc == nil {

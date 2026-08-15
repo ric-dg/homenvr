@@ -139,7 +139,7 @@ func TestPreRollEventCmd(t *testing.T) {
 		filepath.Join(cam.Record.OutDir, ".preroll-front", "00000000.ts"),
 		filepath.Join(cam.Record.OutDir, ".preroll-front", "00000001.ts"),
 	}
-	got := r.preRollEventCmd(cfg, cam, path, pre)
+	got := r.preRollEventCmd(cfg, cam, path, pre, false)
 	joined := strings.Join(got, " ")
 
 	for _, want := range []string{
@@ -175,13 +175,45 @@ func TestPreRollEventCmdCopyDegrades(t *testing.T) {
 	cam = *cfg.Camera("front")
 	got := r.preRollEventCmd(cfg, cam,
 		filepath.Join(cam.Record.OutDir, "front-20060102-150405.mp4"),
-		[]string{"seg.ts"})
+		[]string{"seg.ts"}, false)
 	joined := strings.Join(got, " ")
 	if !strings.Contains(joined, "-c:v libx264") {
 		t.Errorf("pre-roll with codec copy should degrade to libx264:\n%v", got)
 	}
 	if strings.Contains(joined, "-c:v copy") {
 		t.Errorf("pre-roll must not stream-copy:\n%v", got)
+	}
+}
+
+func TestPreRollEventCmdAudioInput(t *testing.T) {
+	cam := camNoAudio("front")
+	cam.Record.PreRollSec = 4
+	cam.Mic.Enabled = true
+	cam.Mic.RecPort = 9011
+	cam.Mic.SampleRate = 48000
+	cam.Mic.Channels = 1
+	r, _, _ := testRecorder(t, []config.Camera{cam})
+	cfg := r.cfg.Get()
+	cam = *cfg.Camera("front")
+	pre := []string{"seg0.ts", "seg1.ts"}
+	got := r.preRollEventCmd(cfg, cam,
+		filepath.Join(cam.Record.OutDir, "front-20060102-150405.mp4"), pre, true)
+	joined := strings.Join(got, " ")
+
+	// live(0) + 2 ring inputs(1,2) + mic(3): every -i must be present or the
+	// filtergraph's [3:a:0] reference fails to bind.
+	wantIn := "-i tcp://127.0.0.1:9011"
+	if !strings.Contains(joined, wantIn) {
+		t.Errorf("pre-roll event cmd missing mic input %q:\n%v", wantIn, got)
+	}
+	if n := strings.Count(joined, " -i "); n != 4 {
+		t.Errorf("pre-roll event cmd should have 4 inputs (live+2 ring+mic), got %d:\n%v", n, got)
+	}
+	if !strings.Contains(joined, "[3:a:0]anull[aout]") {
+		t.Errorf("pre-roll event cmd should map mic audio via [3:a:0]:\n%v", got)
+	}
+	if !strings.Contains(joined, "-map [aout]") {
+		t.Errorf("pre-roll event cmd should map [aout]:\n%v", got)
 	}
 }
 
