@@ -541,10 +541,11 @@ const updateScript = `param(
 )
 $ErrorActionPreference = 'Stop'
 $exeBase = [IO.Path]::GetFileNameWithoutExtension($TargetExe)
-$log = Join-Path (Split-Path $TargetExe -Parent) 'update.log'
 function Write-Log([string]$m) {
-    $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  $m"
-    try { $line | Out-File -FilePath $log -Append -Encoding utf8 } catch { }
+    # The daemon passes update.log as this process's stdout, so Write-Output
+    # lands in the log. A separate Out-File cannot reopen the file while the
+    # inherited handle holds it.
+    Write-Output "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  $m"
 }
 function Test-DaemonRunning {
     return [bool](Get-Process -Name $exeBase -ErrorAction SilentlyContinue)
