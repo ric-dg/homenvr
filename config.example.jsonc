@@ -2,6 +2,10 @@
   // HomeNVR v2 example config. Copy to config.jsonc and edit.
   // JSONC: // and /* */ comments allowed. Unknown keys are ignored.
   // Tools are auto-resolved (bundled copy, PATH, then scoop) when left "".
+  //
+  // config.jsonc is gitignored and host-specific. RTSP sources may carry
+  // credentials (rtsp://user:pass@host/...) - keep those only in the local
+  // config.jsonc, never in this example or in any committed file.
 
   "go2rtc": {
     "api_port": 1984,    // live web UI + go2rtc API
@@ -49,6 +53,10 @@
       },
       "mic": {
         "enabled": true,
+        // Windows capture backend: "ks" (WDM-KS), "wasapi", or "" for auto
+        // (WASAPI first, KS fallback). Only used on Windows; other platforms
+        // always capture via an ffmpeg PCM pipe.
+        "backend": "ks",
         "device_name": "Brio 100",
         "sample_rate": 48000, "channels": 1, "block_size": 960, "gain": 8,
         "live_port": 9010, "rec_port": 9011, "ctl_port": 9012
@@ -66,7 +74,7 @@
       "record": {
         "enabled": true,
         "prefix": "brio",
-        "out_dir": "E:\\CCTV",
+        "out_dir": "C:\\CCTV",            // where event recordings go
         "video": { "codec": "av1_nvenc", "preset": "p5", "rc": "vbr",
                    "cq": 38, "crf": 34, "maxrate": "3M", "g": 30 },
         "audio": { "codec": "aac", "bitrate": "64k" }
