@@ -37,8 +37,15 @@ internal/recorder/   event / continuous / combined recording loops
 internal/retention/  rolling deletion by retain_hours
 internal/watchdog/   health probes + alerts (ntfy)
 internal/web/        control panel (embedded HTTP server)
-packaging/service/   WinSW service install + on/off scripts
+packaging/service/   WinSW service install + shared helper module
+scripts/             dev-ops helpers (status/probe/deploy/restart/...)
 ```
+
+On Windows the mic is captured natively by the daemon: WASAPI by default,
+with a WDM-KS (kernel streaming) fallback when the audio policy layer exposes
+no endpoint for the configured device (see `mic.backend` in the config:
+`"ks"`, `"wasapi"`, or `""` for auto). The Brio-class webcam mic is never a
+DirectShow device, so the old ffmpeg `-f dshow` path cannot open it.
 
 ## Run
 
@@ -59,18 +66,42 @@ Requires [WinSW](https://github.com/winsw/winsw/releases) (any recent 2.x).
 From an elevated shell, with `go` available in PATH:
 
 ```powershell
-.\packaging\service\install-service.ps1 -WinSW C:\path\to\WinSW-x64.exe
+.\packaging\service\install-service.ps1 -WinSW C:\path\to\WinSW-x64.exe -ServiceDir C:\Tools\homenvr
 .\packaging\service\homenvr-on.ps1 -Confirm
 .\packaging\service\homenvr-off.ps1 -Confirm
 ```
 
-`install-service.ps1` builds `homenvrd.exe`, stages it under
-`C:\Tools\homenvr` with the WinSW binary and rendered XML, and registers
-service `homenvrd` (Automatic start, restart on failure, rolled logs).
-Pass `-ServiceDir`, `-ConfigPath`, `-YAMLPath` to relocate; `-NoBuild` to
-skip the build; `-Uninstall` to remove the service. The daemon runs under
-LocalSystem and resolves ffmpeg/ffprobe/go2rtc by bundled copy, PATH, then
-scoop, so no service-specific environment is required.
+`install-service.ps1` builds `homenvrd.exe`, stages it under `-ServiceDir`
+with the WinSW binary and rendered XML, and registers service `homenvrd`
+(Automatic start, restart on failure, rolled logs). The scripts derive their
+paths dynamically - install dir, log dir and ports all come from the
+installed service and `config.jsonc`, so nothing is host-specific.
+`-ServiceDir` is only required for a fresh install; an existing service is
+relocated automatically. `-NoBuild` skips the build, `-Uninstall` removes the
+service, and `-ConfigPath`/`-YAMLPath` override where config and the generated
+go2rtc.yaml are staged. The daemon runs under LocalSystem and resolves
+ffmpeg/ffprobe/go2rtc by bundled copy, PATH, then scoop, so no
+service-specific environment is required.
+
+### Dev-ops helpers
+
+`scripts/homenvr.ps1` wraps the service scripts and adds diagnostics. Run it
+from a normal prompt; the commands that touch the service elevate themselves
+(accept the UAC prompt):
+
+```powershell
+.\scripts\homenvr.ps1 status            # service state + process tree
+.\scripts\homenvr.ps1 probe             # + log tails + go2rtc /api/streams
+.\scripts\homenvr.ps1 det-repro         # run the detector's ffmpeg pipe standalone
+.\scripts\homenvr.ps1 start | stop      # start/stop the service
+.\scripts\homenvr.ps1 restart           # stop, kill orphans, start
+.\scripts\homenvr.ps1 deploy            # build, swap binary, restart
+```
+
+`det-repro` runs the motion detector's exact ffmpeg command with stderr
+captured (the daemon discards it) and reports frames per second - it tells
+you whether a "detector stream lost" problem is the RTSP/go2rtc feed or the
+daemon's frame reading.
 
 ## Build & test
 

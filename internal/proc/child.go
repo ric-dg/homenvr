@@ -18,7 +18,7 @@ import (
 const (
 	StdoutDiscard = ""     // stdout to /dev/null
 	StdoutFile    = "file" // stdout to <name>.out.log
-	StdoutPipe    = "pipe" // stdout readable via StdoutReader/ReadStdout
+	StdoutPipe    = "pipe" // stdout readable via StdoutReader
 )
 
 // Std stream routing values for Options.Stderr.
@@ -199,17 +199,6 @@ func (c *Child) StdoutReader() io.Reader {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.stdout
-}
-
-// ReadStdout performs a single read from the piped stdout (mirroring v1's
-// detector.stdout.read(n)).
-func (c *Child) ReadStdout(p []byte) (int, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.stdout == nil {
-		return 0, fmt.Errorf("%s: stdout not piped", c.name)
-	}
-	return c.stdout.Read(p)
 }
 
 // WriteStdin writes to the child's stdin pipe (only when Options.Stdin).
