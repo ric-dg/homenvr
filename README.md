@@ -94,17 +94,20 @@ From an elevated shell, with `go` available in PATH:
 .\packaging\service\homenvr-off.ps1 -Confirm
 ```
 
-`install-service.ps1` builds `homenvrd.exe`, stages it under `-ServiceDir`
-with the WinSW binary and rendered XML, and registers service `homenvrd`
-(Automatic start, restart on failure, rolled logs). The scripts derive their
+`install-service.ps1` builds `homenvrd.exe` and `homenvrd-tray.exe`, stages
+them under `-ServiceDir` with the WinSW binary and rendered XML, and registers
+service `homenvrd` (Automatic start, restart on failure, rolled logs). By
+default it also creates a `HomeNVR Tray.lnk` in the startup folder and on the
+desktop pointing at the tray; tick them off with
+`-StartupShortcut:$false`/`-DesktopShortcut:$false`. The scripts derive their
 paths dynamically - install dir, log dir and ports all come from the
 installed service and `config.jsonc`, so nothing is host-specific.
 `-ServiceDir` is only required for a fresh install; an existing service is
 relocated automatically. `-NoBuild` skips the build, `-Uninstall` removes the
-service, and `-ConfigPath`/`-YAMLPath` override where config and the generated
-go2rtc.yaml are staged. The daemon runs under LocalSystem and resolves
-ffmpeg/ffprobe/go2rtc by bundled copy, PATH, then scoop, so no
-service-specific environment is required.
+service and the tray shortcuts, and `-ConfigPath`/`-YAMLPath` override where
+config and the generated go2rtc.yaml are staged. The daemon runs under
+LocalSystem and resolves ffmpeg/ffprobe/go2rtc by bundled copy, PATH, then
+scoop, so no service-specific environment is required.
 
 ### Dev-ops helpers
 
