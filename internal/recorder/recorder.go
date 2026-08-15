@@ -476,9 +476,13 @@ func (r *Recorder) runEvent(ctx context.Context) error {
 
 		frame, err := det.ReadFrame()
 		if err != nil {
-			r.log.Logf("detector stream lost, restarting in 2s")
 			det.Close()
-			if !sleepctx.Sleep(ctx, 2*time.Second) {
+			delay := time.Duration(m.RestartBackoff * float64(time.Second))
+			if delay <= 0 {
+				delay = 2 * time.Second
+			}
+			r.log.Logf("detector stream lost, restarting in %.0fs: %v", delay.Seconds(), err)
+			if !sleepctx.Sleep(ctx, delay) {
 				break
 			}
 			if err := det.Start(detW, detH, detFPS); err != nil {
