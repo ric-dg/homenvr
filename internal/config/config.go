@@ -34,7 +34,12 @@ type Config struct {
 
 // Web configures the embedded control panel server.
 type Web struct {
-	Port int `json:"port"`
+	// Bind is the interface the panel listens on: "127.0.0.1" (default) for
+	// local-only access, "0.0.0.0" or a LAN/VPN IP for remote access.
+	// The panel exposes full control (shutdown/restart/update), so keep the
+	// default unless the machine is on a trusted network.
+	Bind string `json:"bind"`
+	Port int    `json:"port"`
 }
 
 type Go2rtc struct {
@@ -222,7 +227,7 @@ func Defaults() Config {
 		Log:     Log{Level: "info", MaxMB: 10, Keep: 5},
 		Tools:   Tools{},
 		Monitor: Monitor{Enabled: true, IntervalSec: 10, AlertAfterSec: 300},
-		Web:     Web{Port: 8080},
+		Web:     Web{Bind: "127.0.0.1", Port: 8080},
 	}
 }
 
@@ -327,6 +332,14 @@ func (c *Config) Validate() error {
 	case "event", "continuous", "combined":
 	default:
 		errs = append(errs, fmt.Sprintf("record.mode %q is invalid (want event|continuous|combined)", c.Record.Mode))
+	}
+	if b := c.Web.Bind; b != "" {
+		if strings.ContainsAny(b, " :/") {
+			errs = append(errs, fmt.Sprintf("web.bind %q is invalid (want an IP or hostname, e.g. 127.0.0.1 or 0.0.0.0)", b))
+		}
+	}
+	if c.Web.Port <= 0 || c.Web.Port > 65535 {
+		errs = append(errs, fmt.Sprintf("web.port %d is invalid (want 1..65535)", c.Web.Port))
 	}
 	sort.Strings(errs)
 	if len(errs) > 0 {

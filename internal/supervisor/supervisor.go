@@ -172,6 +172,13 @@ func (s *Supervisor) retentionOnce(now time.Time) {
 	retention.Run(func(msg string) { s.log.Logf("%s", msg) }, dirs, cfg.Record.RetainHours, now)
 }
 
+// RunRetentionNow runs the retention cleanup immediately (web panel
+// "Run retention" action), bypassing the 600s ticker.
+func (s *Supervisor) RunRetentionNow() {
+	s.log.Logf("retention: manual run requested")
+	s.retentionOnce(time.Now())
+}
+
 func (s *Supervisor) tick(ctx context.Context) {
 	cfg := s.cfg.Get()
 	if changed, err := s.cfg.Refresh(); err != nil {

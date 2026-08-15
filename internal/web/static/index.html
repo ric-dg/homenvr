@@ -12,6 +12,7 @@
   <nav>
     <button class="tab active" data-tab="status">Status</button>
     <button class="tab" data-tab="recordings">Recordings</button>
+    <button class="tab" data-tab="logs">Logs</button>
     <button class="tab" data-tab="config">Config</button>
   </nav>
   <a class="live" target="_blank" rel="noopener" href="#" id="live-link">Live view</a>
@@ -22,6 +23,21 @@
   <section id="tab-recordings" class="panel">
     <div id="rec-list"></div>
     <video id="player" controls hidden></video>
+  </section>
+  <section id="tab-logs" class="panel">
+    <div class="card">
+      <div class="toolbar">
+        <select id="log-name">
+          <option value="service">service.log</option>
+          <option value="alert">alert.log</option>
+          <option value="go2rtc">go2rtc.out.log</option>
+          <option value="go2rtc.err">go2rtc.err.log</option>
+        </select>
+        <button id="log-refresh" class="secondary">Refresh</button>
+        <span id="log-msg"></span>
+      </div>
+      <pre id="log-view" class="log"></pre>
+    </div>
   </section>
   <section id="tab-config" class="panel">
     <div class="toolbar">

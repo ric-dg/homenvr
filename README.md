@@ -54,11 +54,34 @@ cp config.example.jsonc config.jsonc   # edit paths/cameras
 .\homenvrd.exe -config config.jsonc -yaml go2rtc.yaml
 ```
 
-- Control panel: `http://localhost:8080` (config `web.port`).
+- Control panel: `http://localhost:8080` (config `web.port`, `web.bind`).
 - Live view + go2rtc web UI: `http://localhost:1984` (config `go2rtc.api_port`).
 - Recordings: `GET /api/recordings`, playback via
   `GET /api/recordings/{camera}[/combined]/{file}` (Range-supported MP4).
 - Stop gracefully: `POST /api/shutdown` (panel "Shutdown" button).
+
+### Web-only operations (no desktop, no UAC)
+
+The panel covers service administration, because the daemon runs as the
+service account - every operation below works from any browser, fully
+headless:
+
+| Action | Endpoint | Panel |
+|---|---|---|
+| Config edit + hot reload | `GET/PUT /api/config` | Config tab |
+| Restart service | `POST /api/restart` | Status → Restart service |
+| Run retention now | `POST /api/retention/run` | Status → Run retention |
+| Log tails | `GET /api/logs?name=service\|alert\|go2rtc\|go2rtc.err` | Logs tab |
+| Stop service | `POST /api/shutdown` | Status |
+| Self-update binary | `POST /api/update` (raw exe body) | Status → Upload & restart |
+
+Restart works because the daemon exits with a reserved non-zero code that
+WinSW's `onfailure action="restart"` turns into a restart. Self-update stages
+the uploaded exe, spawns a detached PowerShell helper, then exits; the helper
+swaps the binary and starts the service (`update.log` next to the exe records
+its progress). Set `web.bind` to `0.0.0.0` or a LAN/VPN IP to reach the panel
+remotely - keep `127.0.0.1` unless the network is trusted, since the panel
+can restart and replace the daemon.
 
 ## Windows service
 

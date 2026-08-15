@@ -71,12 +71,85 @@ async function renderStatus() {
         el("tr", {}, el("td", { text: "go2rtc" }),
           el("td", {}, el("span", { class: g.running ? "up" : "down", text: g.running ? "running" : "stopped" }),
             g.running ? " (pid " + g.pid + ")" : "")))),
+      adminControls()),
     el("div", { class: "card" },
       el("h2", { text: "Cameras" }),
       el("table", {},
         el("tr", {}, el("th", { text: "Name" }), el("th", { text: "Runner" }), el("th", { text: "Mic" }), el("th", { text: "Mode" })),
         ...camRows)));
 }
+
+// ---------------- admin (service + update) ----------------
+
+function adminControls() {
+  const msg = el("span", { id: "svc-msg" });
+  const restartBtn = el("button", { class: "danger", text: "Restart service", onclick: restartService });
+  const retBtn = el("button", { class: "secondary", text: "Run retention", onclick: runRetention });
+  const file = el("input", { type: "file", accept: ".exe,application/octet-stream" });
+  const upBtn = el("button", { class: "secondary", text: "Upload & restart", onclick: () => uploadUpdate(file, msg) });
+  return el("div", { class: "row" }, restartBtn, retBtn, upBtn, file, msg);
+}
+
+async function restartService() {
+  try {
+    await api("/api/restart", { method: "POST" });
+    $("#svc-msg").textContent = "restarting…";
+    $("#svc-msg").className = "up";
+  } catch (e) {
+    $("#svc-msg").textContent = e.message;
+    $("#svc-msg").className = "err";
+  }
+}
+
+async function runRetention() {
+  try {
+    await api("/api/retention/run", { method: "POST" });
+    $("#svc-msg").textContent = "retention ran";
+    $("#svc-msg").className = "up";
+  } catch (e) {
+    $("#svc-msg").textContent = e.message;
+    $("#svc-msg").className = "err";
+  }
+}
+
+async function uploadUpdate(file, msg) {
+  if (!file.files.length) { msg.textContent = "choose a .exe first"; msg.className = "err"; return; }
+  msg.textContent = "uploading…";
+  msg.className = "up";
+  try {
+    const res = await fetch("/api/update", { method: "POST", body: file.files[0] });
+    const text = await res.text();
+    let data = text; try { data = text ? JSON.parse(text) : null; } catch (_) {}
+    if (!res.ok) throw new Error((data && data.error) || res.statusText);
+    msg.textContent = "update staged; service restarting…";
+    msg.className = "up";
+  } catch (e) {
+    msg.textContent = e.message;
+    msg.className = "err";
+  }
+}
+
+// ---------------- logs ----------------
+
+async function renderLogs() {
+  const name = $("#log-name").value;
+  const msg = $("#log-msg");
+  try {
+    const res = await fetch("/api/logs?name=" + encodeURIComponent(name) + "&lines=1000");
+    if (!res.ok) {
+      let data = await res.text();
+      try { data = JSON.parse(data).error || data; } catch (_) {}
+      throw new Error(data);
+    }
+    $("#log-view").textContent = await res.text();
+    msg.textContent = "";
+    msg.className = "";
+  } catch (e) {
+    msg.textContent = e.message;
+    msg.className = "err";
+  }
+}
+$("#log-refresh").addEventListener("click", renderLogs);
 
 // ---------------- recordings ----------------
 
@@ -153,6 +226,7 @@ async function refresh() {
   try {
     if (tab === "status") await renderStatus();
     if (tab === "recordings") await renderRecordings();
+    if (tab === "logs") await renderLogs();
   } catch (e) {
     document.querySelector(".panel.active").innerHTML =
       '<div class="card err">' + e.message + "</div>";

@@ -64,6 +64,18 @@ button {
 }
 button:hover { filter: brightness(1.1); }
 button.secondary { background: var(--border); }
+button.danger { background: var(--bad); }
+.row { display: flex; gap: 8px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+.row .muted { color: var(--muted); font-size: 12px; }
+select, input[type=file] { color: var(--fg); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font-size: 13px; }
+pre.log {
+  background: #0d1117; color: #c9d1d9;
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 12px; height: 60vh; overflow: auto;
+  font: 12px/1.5 ui-monospace, Consolas, monospace;
+  white-space: pre-wrap; word-break: break-word;
+  margin: 0;
+}
 a.play { color: var(--accent); cursor: pointer; text-decoration: none; }
 #player { width: 100%; max-height: 70vh; background: #000; border-radius: 8px; margin-top: 12px; }
 .err { color: var(--bad); }

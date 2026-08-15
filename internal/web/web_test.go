@@ -202,3 +202,100 @@ func TestRecordingsListAndServe(t *testing.T) {
 		}
 	}
 }
+
+func TestAdminEndpointsWired(t *testing.T) {
+	var restarted, retained bool
+	s, _, _ := testServer(t)
+	s.opts.OnRestart = func() { restarted = true }
+	s.opts.RunRetention = func() { retained = true }
+
+	if rec := doReq(t, s, "POST", "/api/restart", ""); rec.Code != 204 {
+		t.Errorf("POST /api/restart = %d, want 204", rec.Code)
+	}
+	// OnRestart fires asynchronously after a short flush delay.
+	deadline := time.Now().Add(2 * time.Second)
+	for !restarted && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !restarted {
+		t.Error("OnRestart was not invoked")
+	}
+
+	if rec := doReq(t, s, "POST", "/api/retention/run", ""); rec.Code != 204 || !retained {
+		t.Errorf("POST /api/retention/run = %d, retained=%v", rec.Code, retained)
+	}
+}
+
+func TestAdminEndpointsUnwired(t *testing.T) {
+	s, _, _ := testServer(t) // no OnRestart/RunRetention/OnShutdown set
+	if rec := doReq(t, s, "POST", "/api/restart", ""); rec.Code != 501 {
+		t.Errorf("POST /api/restart (unwired) = %d, want 501", rec.Code)
+	}
+	if rec := doReq(t, s, "POST", "/api/retention/run", ""); rec.Code != 501 {
+		t.Errorf("POST /api/retention/run (unwired) = %d, want 501", rec.Code)
+	}
+	if rec := doReq(t, s, "POST", "/api/shutdown", ""); rec.Code != 501 {
+		t.Errorf("POST /api/shutdown (unwired) = %d, want 501", rec.Code)
+	}
+}
+
+func TestLogsEndpoint(t *testing.T) {
+	s, _, _ := testServer(t)
+	logDir := s.cfg.Get().Paths.LogDir
+	logPath := filepath.Join(logDir, "service.log")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lines := []string{}
+	for i := 1; i <= 5; i++ {
+		lines = append(lines, fmt.Sprintf("line %d", i))
+	}
+	if err := os.WriteFile(logPath, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := doReq(t, s, "GET", "/api/logs?name=service&lines=3", "")
+	if rec.Code != 200 {
+		t.Fatalf("GET /api/logs = %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "line 5") || strings.Contains(rec.Body.String(), "line 2") {
+		t.Errorf("logs tail wrong: %q", rec.Body.String())
+	}
+
+	// Unknown log name is rejected, missing file is 404.
+	if rec := doReq(t, s, "GET", "/api/logs?name=../../windows", ""); rec.Code != 400 {
+		t.Errorf("unknown log name = %d, want 400", rec.Code)
+	}
+	if rec := doReq(t, s, "GET", "/api/logs?name=alert", ""); rec.Code != 404 {
+		t.Errorf("missing alert log = %d, want 404", rec.Code)
+	}
+}
+
+func TestUpdateGuards(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.jsonc")
+	// "pwsh" points at an existing file that is not an executable, so the
+	// config resolver keeps it (it only stats the path) and cmd.Start fails
+	// harmlessly instead of spawning a real updater.
+	content := fmt.Sprintf(`{ "tools": { "pwsh": %q } }`, cfgPath)
+	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f, err := config.NewFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New(f, Options{ConfigPath: cfgPath, Log: tlog{t}})
+	s.opts.OnUpdate = func() { t.Error("OnUpdate must not fire when staging fails") }
+
+	// Payload is not a Windows exe -> rejected before staging.
+	if rec := doReq(t, s, "POST", "/api/update", "not an exe"); rec.Code != 400 {
+		t.Errorf("update with non-exe payload = %d, want 400", rec.Code)
+	}
+
+	// Valid MZ header reaches staging, but the bogus pwsh fails to spawn,
+	// so the endpoint returns 500 and OnUpdate never fires.
+	if rec := doReq(t, s, "POST", "/api/update", string([]byte("MZ fake exe"))); rec.Code != 500 {
+		t.Errorf("update with unspawnable pwsh = %d, want 500", rec.Code)
+	}
+}

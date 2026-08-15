@@ -36,7 +36,10 @@
     "ntfy_topic": ""         // pushover/ntfy topic for watchdog alerts
   },
 
-  "web": { "port": 8080 },   // embedded control panel (bind: 127.0.0.1)
+  // Embedded control panel. bind defaults to 127.0.0.1 (local-only). The
+  // panel can restart the service and replace the daemon binary, so only set
+  // bind to 0.0.0.0 or a LAN/VPN IP on a trusted network.
+  "web": { "port": 8080, "bind": "127.0.0.1" },
 
   "cameras": [
     {
