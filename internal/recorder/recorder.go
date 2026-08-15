@@ -153,8 +153,12 @@ func (r *Recorder) eventCmd(cfg *config.Config, cam config.Camera, path string) 
 	if hasAudio {
 		cmd = append(cmd, "-map", "1:a:0")
 	}
-	cmd = append(cmd, "-vf", drawtext(cam.Name))
-	cmd = append(cmd, config.VideoEncodeArgs(cam.Record.Video, cfg.GPU.Encoders)...)
+	// Stream copy ("codec: copy", the low-RAM SBC path) cannot take a video
+	// filter, so the timestamp label is dropped there.
+	if codec := cfg.ResolvedCodec(cam.Record.Video.Codec); codec != "copy" {
+		cmd = append(cmd, "-vf", drawtext(cam.Name))
+	}
+	cmd = append(cmd, config.VideoEncodeArgs(cfg, cam.Record.Video)...)
 	if hasAudio {
 		cmd = append(cmd, "-c:a", cam.Record.Audio.Codec, "-b:a", cam.Record.Audio.Bitrate)
 	}
@@ -173,8 +177,10 @@ func (r *Recorder) continuousCmd(cfg *config.Config, cam config.Camera) []string
 	if hasAudio {
 		cmd = append(cmd, "-map", "1:a:0")
 	}
-	cmd = append(cmd, "-vf", drawtext(cam.Name))
-	cmd = append(cmd, config.VideoEncodeArgs(cam.Record.Video, cfg.GPU.Encoders)...)
+	if codec := cfg.ResolvedCodec(cam.Record.Video.Codec); codec != "copy" {
+		cmd = append(cmd, "-vf", drawtext(cam.Name))
+	}
+	cmd = append(cmd, config.VideoEncodeArgs(cfg, cam.Record.Video)...)
 	if hasAudio {
 		cmd = append(cmd, "-c:a", cam.Record.Audio.Codec, "-b:a", cam.Record.Audio.Bitrate)
 	}
@@ -235,7 +241,13 @@ func (r *Recorder) combinedCmd(cfg *config.Config) ([]string, string) {
 	if len(ain) > 0 {
 		cmd = append(cmd, "-map", "[aout]")
 	}
-	cmd = append(cmd, config.VideoEncodeArgs(cams[0].Record.Video, cfg.GPU.Encoders)...)
+	// The combined recorder always re-encodes (xstack + labels), so a
+	// "codec: copy" setting degrades to libx264 rather than erroring.
+	v := cams[0].Record.Video
+	if cfg.ResolvedCodec(v.Codec) == "copy" {
+		v.Codec = "libx264"
+	}
+	cmd = append(cmd, config.VideoEncodeArgs(cfg, v)...)
 	if len(ain) > 0 {
 		cmd = append(cmd, "-c:a", "aac", "-b:a", "128k")
 	}
@@ -317,7 +329,7 @@ func (r *Recorder) cleanup(now time.Time) {
 	if cfg.Record.Mode == "combined" {
 		dirs = append(dirs, filepath.Join(cam.Record.OutDir, "combined"))
 	}
-	retention.Run(func(msg string) { r.log.Logf("%s", msg) }, dirs, cfg.Record.RetainHours, now)
+	retention.Run(func(msg string) { r.log.Logf("%s", msg) }, dirs, cfg.Record.RetainHours, cfg.Record.RetainMB, now)
 }
 
 // ------------- event mode (v1 run_event) -------------

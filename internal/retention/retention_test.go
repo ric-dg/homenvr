@@ -37,7 +37,7 @@ func TestRun(t *testing.T) {
 	writeTestFile(t, dir, "notes.txt", 1000, old)
 
 	var removed []string
-	Run(func(msg string) { removed = append(removed, msg) }, []string{dir}, 72, now)
+	Run(func(msg string) { removed = append(removed, msg) }, []string{dir}, 72, 0, now)
 
 	remaining := map[string]bool{}
 	for _, e := range dirEntries(t, dir) {
@@ -70,14 +70,44 @@ func TestRun(t *testing.T) {
 func TestRunDisabled(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, dir, "old.mp4", 1000, time.Now().Add(-100*time.Hour))
-	Run(func(string) { t.Error("cleanup ran with retain_hours=0") }, []string{dir}, 0, time.Now())
+	Run(func(string) { t.Error("cleanup ran with retain_hours=0") }, []string{dir}, 0, 0, time.Now())
 	if len(dirEntries(t, dir)) != 1 {
 		t.Error("files removed with retain_hours=0")
 	}
 }
 
 func TestRunMissingDir(t *testing.T) {
-	Run(func(string) { t.Error("cleanup ran on missing dir") }, []string{t.TempDir() + "\\nope"}, 72, time.Now())
+	Run(func(string) { t.Error("cleanup ran on missing dir") }, []string{t.TempDir() + "\\nope"}, 72, 0, time.Now())
+}
+
+func TestRunSizeCap(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+	// 3 x 512KiB files, 1MiB cap -> exactly one (the oldest) goes.
+	writeTestFile(t, dir, "a.mp4", 512<<10, now.Add(-3*time.Hour))
+	writeTestFile(t, dir, "b.mp4", 512<<10, now.Add(-2*time.Hour))
+	writeTestFile(t, dir, "c.mp4", 512<<10, now.Add(-time.Hour))
+
+	var removed []string
+	Run(func(msg string) { removed = append(removed, msg) }, []string{dir}, 0, 1, now)
+
+	if len(removed) != 1 || !strings.Contains(removed[0], "a.mp4") {
+		t.Errorf("size cap removed %v, want only the oldest a.mp4", removed)
+	}
+	for _, name := range []string{"b.mp4", "c.mp4"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Errorf("%s was removed under the size cap", name)
+		}
+	}
+}
+
+func TestRunSizeCapDisabled(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "a.mp4", 2048, time.Now().Add(-time.Hour))
+	Run(func(string) { t.Error("size cleanup ran with retain_mb=0") }, []string{dir}, 72, 0, time.Now())
+	if len(dirEntries(t, dir)) != 1 {
+		t.Error("files removed with retain_mb=0")
+	}
 }
 
 func dirEntries(t *testing.T, dir string) []string {

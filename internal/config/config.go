@@ -30,6 +30,11 @@ type Config struct {
 	Tools   Tools    `json:"tools"`
 	Monitor Monitor  `json:"monitor"`
 	Web     Web      `json:"web"`
+
+	// Encoders is the ffmpeg encoder probe result, filled by Load (never
+	// serialized to JSON). Parse leaves it empty, which is fine: nothing but
+	// Load output ever builds ffmpeg command lines.
+	Encoders EncoderProbe `json:"-"`
 }
 
 // Web configures the embedded control panel server.
@@ -72,6 +77,9 @@ type Audio struct {
 type Live struct {
 	Video Video `json:"video"`
 	Audio Audio `json:"audio"`
+	// HLS enables go2rtc HLS output for this camera (e.g. iPhone/Safari
+	// playback). Adds "hls: true" to the generated go2rtc.yaml.
+	HLS bool `json:"hls,omitempty"`
 }
 
 type Mic struct {
@@ -149,6 +157,9 @@ type Camera struct {
 type Record struct {
 	Mode        string `json:"mode"`
 	RetainHours int    `json:"retain_hours"`
+	// RetainMB caps the total recordings size across all cameras (0 = off).
+	// Older files are deleted first, so recordings never fill the disk.
+	RetainMB int64 `json:"retain_mb"`
 }
 
 type Paths struct {

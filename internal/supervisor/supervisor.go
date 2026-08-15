@@ -169,7 +169,7 @@ func (s *Supervisor) retentionOnce(now time.Time) {
 			}
 		}
 	}
-	retention.Run(func(msg string) { s.log.Logf("%s", msg) }, dirs, cfg.Record.RetainHours, now)
+	retention.Run(func(msg string) { s.log.Logf("%s", msg) }, dirs, cfg.Record.RetainHours, cfg.Record.RetainMB, now)
 }
 
 // RunRetentionNow runs the retention cleanup immediately (web panel

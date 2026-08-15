@@ -154,26 +154,29 @@ func TestValidate(t *testing.T) {
 
 func TestVideoEncodeArgs(t *testing.T) {
 	live := DefaultCamera().Live.Video
-	got := VideoEncodeArgs(live, "auto")
+	cfg := &Config{GPU: GPU{Encoders: "auto"}, Encoders: EncoderProbe{NVENC: true, CPU: []string{"libx264", "libsvtav1"}}}
+	got := VideoEncodeArgs(cfg, live)
 	want := []string{"-c:v", "h264_nvenc", "-preset", "p2", "-rc", "vbr", "-cq", "28", "-b:v", "0", "-maxrate", "4M", "-g", "15", "-tune", "ll", "-bf", "0"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Errorf("nvenc args = %v, want %v", got, want)
 	}
 
-	got = VideoEncodeArgs(live, "1")
+	cfg.GPU.Encoders = "1"
+	got = VideoEncodeArgs(cfg, live)
 	if !contains(got, "-gpu", "1") {
 		t.Errorf("gpu index missing: %v", got)
 	}
 
 	rec := DefaultCamera().Record.Video
-	got = VideoEncodeArgs(rec, "auto")
+	cfg.GPU.Encoders = "auto"
+	got = VideoEncodeArgs(cfg, rec)
 	want = []string{"-c:v", "av1_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "38", "-b:v", "0", "-maxrate", "3M", "-g", "30"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Errorf("record nvenc args = %v, want %v", got, want)
 	}
 
 	cpu := Video{Codec: "libx264", Preset: "p5", CRF: 23, G: 30}
-	got = VideoEncodeArgs(cpu, "auto")
+	got = VideoEncodeArgs(cfg, cpu)
 	want = []string{"-c:v", "libx264", "-preset", "medium", "-crf", "23", "-g", "30"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Errorf("cpu args = %v, want %v", got, want)
@@ -181,6 +184,60 @@ func TestVideoEncodeArgs(t *testing.T) {
 	if p := cpuPreset("libsvtav1", "p1"); p != "12" {
 		t.Errorf("svtav1 p1 = %q, want 12", p)
 	}
+}
+
+func TestVideoEncodeArgsFallback(t *testing.T) {
+	// No NVIDIA hardware: nvenc codecs degrade to their CPU equivalents with
+	// the CPU preset mapping, and the GPU flag is never emitted.
+	cfg := &Config{GPU: GPU{Encoders: "auto"}, Encoders: EncoderProbe{CPU: []string{"libx264"}}}
+	got := VideoEncodeArgs(cfg, DefaultCamera().Live.Video) // h264_nvenc
+	want := []string{"-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-g", "15"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("nvenc->cpu fallback = %v, want %v", got, want)
+	}
+	if got := VideoEncodeArgs(cfg, DefaultCamera().Record.Video); got[1] != "libx264" {
+		t.Errorf("av1_nvenc fallback = %v, want libx264 (no libsvtav1)", got)
+	}
+
+	// libsvtav1 missing from the build -> libx264.
+	cfg2 := &Config{GPU: GPU{Encoders: "auto"}, Encoders: EncoderProbe{CPU: []string{"libx264"}}}
+	if got := VideoEncodeArgs(cfg2, Video{Codec: "libsvtav1", Preset: "p5", CRF: 30, G: 30}); got[1] != "libx264" {
+		t.Errorf("missing svtav1 fallback = %v, want libx264", got)
+	}
+
+	// Passthrough emits nothing but the copy switch.
+	if got := VideoEncodeArgs(cfg, Video{Codec: "copy", Preset: "p5"}); strings.Join(got, " ") != "-c:v copy" {
+		t.Errorf("copy args = %v, want only -c:v copy", got)
+	}
+
+	// ResolvedCodec is stable even when nothing is probed (Parse output).
+	if got := (&Config{}).ResolvedCodec("h264_nvenc"); got != "libx264" {
+		t.Errorf("unprobed nvenc resolves to %q, want libx264", got)
+	}
+}
+
+func TestScanEncoders(t *testing.T) {
+	s := ` V....D h264_nvenc         NVIDIA NVENC H.264 encoder
+ V....D av1_nvenc          NVIDIA NVENC AV1 encoder
+ V....D libsvtav1          SVT-AV1 encoder
+ V..... libx264            libx264 H.264
+`
+	p := scanEncoders(s)
+	if !p.NVENC {
+		t.Error("NVENC not detected")
+	}
+	if !hasCodec(p.CPU, "libx264") || !hasCodec(p.CPU, "libsvtav1") {
+		t.Errorf("cpu codecs = %v, want libx264 and libsvtav1", p.CPU)
+	}
+}
+
+func hasCodec(s []string, want string) bool {
+	for _, v := range s {
+		if v == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestCameraURL(t *testing.T) {

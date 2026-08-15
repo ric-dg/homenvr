@@ -42,12 +42,20 @@ func BuildYAML(cfg *config.Config) string {
 			maps = "-map 0:v:0 -map 1:a:0"
 			streamAud = fmt.Sprintf(" -c:a %s -b:a %s", cam.Live.Audio.Codec, cam.Live.Audio.Bitrate)
 		}
-		enc := "-vf format=yuv420p " + strings.Join(
-			config.VideoEncodeArgs(cam.Live.Video, cfg.GPU.Encoders), " ")
+		enc := strings.Join(config.VideoEncodeArgs(cfg, cam.Live.Video), " ")
+		// Stream copy (live "codec: copy", the low-RAM SBC path) cannot take
+		// a pixel-format filter.
+		if cfg.ResolvedCodec(cam.Live.Video.Codec) != "copy" {
+			enc = "-vf format=yuv420p " + enc
+		}
 		execLine := fmt.Sprintf("exec:%s -hide_banner %s %s %s%s -f mpegts -",
 			ff, videoIn, maps, enc, streamAud)
 		fmt.Fprintf(&b, "  %s:\n", cam.Name)
 		b.WriteString("    - " + execLine + "\n")
+		if cam.Live.HLS {
+			// go2rtc HLS output for iPhone/Safari: http://api:port/<name>.m3u8
+			b.WriteString("    hls: true\n")
+		}
 	}
 	b.WriteString("\npreload:\n")
 	for _, cam := range cfg.Cameras {

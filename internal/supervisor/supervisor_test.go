@@ -12,6 +12,9 @@ import (
 func testConfig() *config.Config {
 	cfg := config.Defaults()
 	cfg.Tools.FFmpeg = `C:\ProgramData\scoop\shims\ffmpeg.exe`
+	// Match this box: NVIDIA present, so the default h264_nvenc live codec is
+	// used rather than degraded to libx264.
+	cfg.Encoders = config.EncoderProbe{NVENC: true, CPU: []string{"libx264", "libsvtav1"}}
 	return &cfg
 }
 

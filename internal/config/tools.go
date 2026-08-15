@@ -50,12 +50,14 @@ func findTool(name, configured string) string {
 	return ""
 }
 
-// resolveTools fills every Tools field that is still empty or invalid.
+// resolveTools fills every Tools field that is still empty or invalid, then
+// probes ffmpeg for the encoders it provides (drives codec fallback).
 func (c *Config) resolveTools() {
 	c.Tools.FFmpeg = findTool("ffmpeg", c.Tools.FFmpeg)
 	c.Tools.Go2rtc = findTool("go2rtc", c.Tools.Go2rtc)
 	c.Tools.Python = findTool("python", c.Tools.Python)
 	c.Tools.Pwsh = findTool("pwsh", c.Tools.Pwsh)
+	c.probeEncoders()
 }
 
 func exeName(name string) string {
