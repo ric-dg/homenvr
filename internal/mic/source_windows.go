@@ -310,7 +310,35 @@ type wasapiSrc struct {
 	outOff int
 }
 
-func newCapture(_ *config.File, name string, log Logger, _ string, _ string, mic config.Mic) (captureSource, error) {
+// newCapture picks the Windows capture backend: native WASAPI when the audio
+// policy layer exposes a device for the configured mic, otherwise the native
+// WDM-KS (kernel streaming) backend. WASAPI enumeration returns an empty
+// collection on machines whose endpoint store is broken (verified: persists
+// across reboots and audio service restarts), so the KS fallback is required
+// there.
+func newCapture(cfg *config.File, name string, log Logger, _ string, _ string, mic config.Mic) (captureSource, error) {
+	switch strings.ToLower(mic.Backend) {
+	case "ks":
+		log.Logf("mic [%s] using forced WDM-KS backend", name)
+		return newKs(name, log, mic)
+	case "wasapi":
+		return newWasapi(name, log, mic)
+	}
+	src, err := newWasapi(name, log, mic)
+	if err == nil {
+		return src, nil
+	}
+	if !strings.Contains(err.Error(), "no WASAPI capture device matches") {
+		return nil, err
+	}
+	log.Logf("mic [%s] WASAPI has no device for %q, falling back to WDM-KS", name, mic.DeviceName)
+	return newKs(name, log, mic)
+}
+
+// newWasapi opens the native WASAPI capture. It returns an error whose text
+// contains "no WASAPI capture device matches" when no device matches, which
+// newCapture treats as the fallback trigger.
+func newWasapi(name string, log Logger, mic config.Mic) (captureSource, error) {
 	if mic.DeviceName == "" {
 		return nil, fmt.Errorf("mic device_name is empty")
 	}
@@ -467,9 +495,9 @@ func (s *wasapiSrc) readBlock(buf []byte) error {
 			s.mu.Unlock()
 			return fmt.Errorf("mic capture closed")
 		}
-		if len(s.out)-s.outOff >= len(buf) {
-			copyInt16Bytes(buf, s.out[s.outOff:])
-			s.outOff += len(buf)
+		if len(s.out)-s.outOff >= len(buf)/2 {
+			copyInt16Bytes(buf, s.out[s.outOff:s.outOff+len(buf)/2])
+			s.outOff += len(buf) / 2
 			if s.outOff == len(s.out) {
 				s.out, s.outOff = nil, 0
 			}
@@ -477,9 +505,9 @@ func (s *wasapiSrc) readBlock(buf []byte) error {
 			return nil
 		}
 		s.drain()
-		if len(s.out)-s.outOff >= len(buf) {
-			copyInt16Bytes(buf, s.out[s.outOff:])
-			s.outOff += len(buf)
+		if len(s.out)-s.outOff >= len(buf)/2 {
+			copyInt16Bytes(buf, s.out[s.outOff:s.outOff+len(buf)/2])
+			s.outOff += len(buf) / 2
 			if s.outOff == len(s.out) {
 				s.out, s.outOff = nil, 0
 			}

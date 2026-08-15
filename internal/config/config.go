@@ -71,6 +71,7 @@ type Live struct {
 
 type Mic struct {
 	Enabled    bool    `json:"enabled"`
+	Backend    string  `json:"backend"`
 	DeviceName string  `json:"device_name"`
 	SampleRate int     `json:"sample_rate"`
 	Channels   int     `json:"channels"`

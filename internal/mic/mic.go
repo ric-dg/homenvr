@@ -1,10 +1,11 @@
 // Package mic captures each camera's microphone and fans the gained PCM out
 // over TCP: live_port and rec_port carry the audio blocks for go2rtc /
 // recordings, ctl_port carries one little-endian u16 RMS level per block for
-// sound detection. On Windows the capture is native WASAPI (the Brio mic is
-// only exposed as a WASAPI endpoint, never as a DirectShow device, so the
-// ffmpeg -f dshow path cannot open it); other platforms fall back to an
-// ffmpeg PCM pipe. It replaces v1 mic_daemon.py without Python or sounddevice.
+// sound detection. On Windows the capture is native WASAPI, falling back to
+// WDM-KS (kernel streaming) when the audio policy layer exposes no endpoint
+// for the configured mic (the Brio mic is never a DirectShow device, so the
+// ffmpeg -f dshow path cannot open it); other platforms capture via an ffmpeg
+// PCM pipe. It replaces v1 mic_daemon.py without Python or sounddevice.
 package mic
 
 import (
@@ -249,8 +250,8 @@ func (f *Feeder) fanout(kind string, b []byte) {
 // micKey covers everything that needs a capture restart (v1's structural
 // change check), including the ffmpeg binary itself.
 func micKey(ffmpeg string, m config.Mic) string {
-	return fmt.Sprintf("%s|%v|%s|%d|%d|%d|%d|%d|%d",
-		ffmpeg, m.Enabled, m.DeviceName, m.SampleRate, m.Channels,
+	return fmt.Sprintf("%s|%v|%s|%s|%d|%d|%d|%d|%d|%d",
+		ffmpeg, m.Enabled, m.Backend, m.DeviceName, m.SampleRate, m.Channels,
 		m.BlockSize, m.LivePort, m.RecPort, m.CtlPort)
 }
 

@@ -8,6 +8,7 @@ package motion
 
 import (
 	"fmt"
+	"io"
 
 	"github.com/ric-dg/homenvr/internal/config"
 	"github.com/ric-dg/homenvr/internal/proc"
@@ -73,20 +74,16 @@ func (d *Detector) Start(w, h, fps int) error {
 	return nil
 }
 
-// ReadFrame reads one w*h grayscale frame with a single read (mirroring v1's
-// detector.stdout.read(frame_bytes)); a short read is an error so the caller
-// restarts the pipe, which is how v1 respawned on detector res/fps changes.
+// ReadFrame reads one w*h grayscale frame (mirroring v1's blocking
+// detector.stdout.read(frame_bytes), which returns exactly n bytes; the raw
+// pipe delivers arbitrary chunk sizes, so a full read is required).
 func (d *Detector) ReadFrame() ([]byte, error) {
 	if d.proc == nil {
 		return nil, fmt.Errorf("detector not started")
 	}
 	buf := make([]byte, d.w*d.h)
-	n, err := d.proc.ReadStdout(buf)
-	if err != nil {
+	if _, err := io.ReadFull(d.proc.StdoutReader(), buf); err != nil {
 		return nil, err
-	}
-	if n != len(buf) {
-		return nil, fmt.Errorf("detector short read: got %d of %d bytes", n, len(buf))
 	}
 	return buf, nil
 }
