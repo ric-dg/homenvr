@@ -123,6 +123,15 @@ type CamRecord struct {
 	OutDir  string `json:"out_dir"`
 	Video   Video  `json:"video"`
 	Audio   Audio  `json:"audio"`
+	// PreRollSec, when > 0, keeps a rolling stream-copy ring buffer of the
+	// last N seconds so event recordings include the moments before the
+	// trigger. 0 = today's exact behavior (recordings start at the trigger).
+	// Costs one extra low-CPU ffmpeg muxing `-c copy` segments while enabled.
+	PreRollSec int `json:"pre_roll_sec"`
+	// SegmentSec is the ring buffer's segment length in seconds; smaller
+	// segments mean a finer pre-roll boundary at a slightly higher mux cost.
+	// Defaults to 2 when 0.
+	SegmentSec int `json:"segment_sec"`
 }
 
 // Camera returns the camera with the given name, or nil when no camera
@@ -218,6 +227,7 @@ func DefaultCamera() Camera {
 		},
 		Record: CamRecord{
 			Enabled: true, Prefix: "brio", OutDir: "E:\\CCTV",
+			PreRollSec: 0, SegmentSec: 2,
 			Video: Video{
 				Codec: "av1_nvenc", Preset: "p5", RC: "vbr",
 				CQ: 38, CRF: 34, MaxRate: "3M", G: 30,
@@ -337,6 +347,12 @@ func (c *Config) Validate() error {
 					seenPorts[p] = cam.Name
 				}
 			}
+		}
+		if cam.Record.PreRollSec < 0 || cam.Record.PreRollSec > 600 {
+			errs = append(errs, fmt.Sprintf("camera %q: record.pre_roll_sec must be 0..600", cam.Name))
+		}
+		if cam.Record.SegmentSec < 0 || cam.Record.SegmentSec > 30 {
+			errs = append(errs, fmt.Sprintf("camera %q: record.segment_sec must be 0..30", cam.Name))
 		}
 	}
 	switch c.Record.Mode {

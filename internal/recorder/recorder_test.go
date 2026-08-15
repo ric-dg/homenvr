@@ -2,6 +2,7 @@ package recorder
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -123,6 +124,107 @@ func TestCombinedCmd(t *testing.T) {
 	}
 	if strings.Contains(joined, "aout") {
 		t.Errorf("combined cmd should not include audio when mics are off:\n%v", argv)
+	}
+}
+
+func TestPreRollEventCmd(t *testing.T) {
+	cam := camNoAudio("front")
+	cam.Record.PreRollSec = 4
+	cam.Record.SegmentSec = 2
+	r, _, _ := testRecorder(t, []config.Camera{cam})
+	cfg := r.cfg.Get()
+	cam = *cfg.Camera("front")
+	path := filepath.Join(cam.Record.OutDir, "front-20060102-150405.mp4")
+	pre := []string{
+		filepath.Join(cam.Record.OutDir, ".preroll-front", "00000000.ts"),
+		filepath.Join(cam.Record.OutDir, ".preroll-front", "00000001.ts"),
+	}
+	got := r.preRollEventCmd(cfg, cam, path, pre)
+	joined := strings.Join(got, " ")
+
+	for _, want := range []string{
+		"-i rtsp://127.0.0.1:8554/front?rw_timeout=8000000",
+		"-i " + pre[0],
+		"-i " + pre[1],
+		"-filter_complex",
+		"[1:v:0]setpts=PTS,fps=15[pr0];",
+		"[2:v:0]setpts=PTS,fps=15[pr1];",
+		"[0:v:0]setpts=PTS,fps=15,drawtext=",
+		"[pr0][pr1][vL]concat=n=3:v=1:a=0[vout]",
+		"-map [vout]",
+		"-c:v av1_nvenc",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("pre-roll event cmd missing %q:\n%v", want, got)
+		}
+	}
+	if strings.Contains(joined, "-vf ") {
+		t.Errorf("pre-roll event cmd must not use -vf, got filter_complex:\n%v", got)
+	}
+	if n := strings.Count(joined, "drawtext"); n != 1 {
+		t.Errorf("drawtext should appear once (live branch only), got %d:\n%v", n, got)
+	}
+}
+
+func TestPreRollEventCmdCopyDegrades(t *testing.T) {
+	cam := camNoAudio("front")
+	cam.Record.PreRollSec = 4
+	cam.Record.Video.Codec = "copy"
+	r, _, _ := testRecorder(t, []config.Camera{cam})
+	cfg := r.cfg.Get()
+	cam = *cfg.Camera("front")
+	got := r.preRollEventCmd(cfg, cam,
+		filepath.Join(cam.Record.OutDir, "front-20060102-150405.mp4"),
+		[]string{"seg.ts"})
+	joined := strings.Join(got, " ")
+	if !strings.Contains(joined, "-c:v libx264") {
+		t.Errorf("pre-roll with codec copy should degrade to libx264:\n%v", got)
+	}
+	if strings.Contains(joined, "-c:v copy") {
+		t.Errorf("pre-roll must not stream-copy:\n%v", got)
+	}
+}
+
+func TestPreRollRingFiles(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i <= 6; i++ {
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("%08d.ts", i)), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := &prerollRing{dir: dir, keep: 4}
+	got := p.files()
+	want := []string{
+		filepath.Join(dir, "00000003.ts"),
+		filepath.Join(dir, "00000004.ts"),
+		filepath.Join(dir, "00000005.ts"),
+	}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("ring files = %v, want %v", got, want)
+	}
+	if got := (&prerollRing{}).files(); got != nil {
+		t.Errorf("nil ring files = %v, want nil", got)
+	}
+}
+
+func TestPreRollRingPrune(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i <= 10; i++ {
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("%08d.ts", i)), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := &prerollRing{dir: dir, keep: 4}
+	p.prune()
+	for _, i := range []int{5, 6, 7, 8, 9, 10} {
+		if _, err := os.Stat(filepath.Join(dir, fmt.Sprintf("%08d.ts", i))); err != nil {
+			t.Errorf("segment %d should survive prune: %v", i, err)
+		}
+	}
+	for _, i := range []int{0, 1, 2, 3, 4} {
+		if _, err := os.Stat(filepath.Join(dir, fmt.Sprintf("%08d.ts", i))); err == nil {
+			t.Errorf("segment %d should have been pruned", i)
+		}
 	}
 }
 

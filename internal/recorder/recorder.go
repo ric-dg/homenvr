@@ -166,6 +166,52 @@ func (r *Recorder) eventCmd(cfg *config.Config, cam config.Camera, path string) 
 	return cmd
 }
 
+// preRollEventCmd builds the per-event recorder command when record.pre_roll_sec
+// is on: the completed ring segments are spliced in front of the live feed
+// through a re-encoding concat filter, so the recording starts pre_roll_sec
+// before the trigger. Because the concat filter must re-encode, a "copy" codec
+// setting degrades to libx264 here (as in combined mode). Only the live portion
+// carries the drawtext timestamp label; pre-roll frames are left untouched.
+func (r *Recorder) preRollEventCmd(cfg *config.Config, cam config.Camera, path string, pre []string) []string {
+	hasAudio := cam.Mic.Enabled && audioAvailable(cam.Mic.RecPort)
+	cmd := r.base(cfg, cam)
+	for _, f := range pre {
+		cmd = append(cmd, "-i", f)
+	}
+	mic := len(pre) + 1
+
+	fps := cam.FPS
+	if fps <= 0 {
+		fps = 15
+	}
+	fpsS := strconv.Itoa(fps)
+	var parts []string
+	for i := range pre {
+		parts = append(parts, fmt.Sprintf("[%d:v:0]setpts=PTS,fps=%s[pr%d]", i+1, fpsS, i))
+	}
+	parts = append(parts, fmt.Sprintf("[0:v:0]setpts=PTS,fps=%s,%s[vL]", fpsS, drawtext(cam.Name)))
+	parts = append(parts, joinTags("pr", len(pre))+"[vL]"+
+		fmt.Sprintf("concat=n=%d:v=1:a=0[vout]", len(pre)+1))
+	if hasAudio {
+		parts = append(parts, fmt.Sprintf("[%d:a:0]anull[aout]", mic))
+	}
+	cmd = append(cmd, "-filter_complex", strings.Join(parts, ";"),
+		"-map", "[vout]")
+	if hasAudio {
+		cmd = append(cmd, "-map", "[aout]")
+	}
+	v := cam.Record.Video
+	if cfg.ResolvedCodec(v.Codec) == "copy" {
+		v.Codec = "libx264"
+	}
+	cmd = append(cmd, config.VideoEncodeArgs(cfg, v)...)
+	if hasAudio {
+		cmd = append(cmd, "-c:a", cam.Record.Audio.Codec, "-b:a", cam.Record.Audio.Bitrate)
+	}
+	cmd = append(cmd, "-movflags", "frag_keyframe+empty_moov", "-f", "mp4", path)
+	return cmd
+}
+
 // continuousCmd builds the rotating-segment recorder (spawn_continuous).
 func (r *Recorder) continuousCmd(cfg *config.Config, cam config.Camera) []string {
 	hasAudio := cam.Mic.Enabled && audioAvailable(cam.Mic.RecPort)
@@ -378,6 +424,8 @@ func (r *Recorder) runEvent(ctx context.Context) error {
 		lastMotion  time.Time
 		lastSound   time.Time
 		lastCleanup time.Time
+		ring        *prerollRing
+		lastPrune   time.Time
 	)
 
 	startEvent := func(trigger string) {
@@ -394,11 +442,20 @@ func (r *Recorder) runEvent(ctx context.Context) error {
 			return
 		}
 		lastStart = now
-		finalTS = now.Format("20060102-150405")
+		if cam.Record.PreRollSec > 0 {
+			finalTS = now.Add(-time.Duration(cam.Record.PreRollSec) * time.Second).Format("20060102-150405")
+		} else {
+			finalTS = now.Format("20060102-150405")
+		}
 		name := cam.Record.Prefix + "-" + finalTS + ".mp4"
 		os.MkdirAll(cam.Record.OutDir, 0o755)
 		path := filepath.Join(cam.Record.OutDir, name)
-		rc := r.spawnEvent(cfg, *cam, path)
+		var rc *proc.Child
+		if pre := ring.files(); len(pre) > 0 {
+			rc = r.spawn(cam.Name, r.preRollEventCmd(cfg, *cam, path, pre))
+		} else {
+			rc = r.spawnEvent(cfg, *cam, path)
+		}
 		if rc == nil {
 			return
 		}
@@ -505,6 +562,31 @@ func (r *Recorder) runEvent(ctx context.Context) error {
 		moved := m.Enabled && det.Analyze(frame, m)
 
 		now := time.Now()
+		wantRing := cam.Record.Enabled && cam.Record.PreRollSec > 0
+		if wantRing {
+			if ring == nil {
+				ring = r.startRing(*cam)
+				if ring != nil {
+					r.log.Logf("preroll ring started (dir=%s)", ring.dir)
+				} else if !sleepctx.Sleep(ctx, 2*time.Second) {
+					break
+				}
+			} else if ring.ch.Exited() {
+				r.log.Logf("preroll ring exited code=%d, restarting", ring.ch.ExitCode())
+				ring.ch = nil
+				ring = nil
+				if !sleepctx.Sleep(ctx, 2*time.Second) {
+					break
+				}
+			} else if now.Sub(lastPrune) > 2*time.Second {
+				ring.prune()
+				lastPrune = now
+			}
+		} else if ring != nil {
+			r.log.Logf("preroll disabled -> stopping ring")
+			ring.stop()
+			ring = nil
+		}
 		if !cam.Record.Enabled {
 			if rec != nil {
 				r.log.Logf("record disabled mid-event -> stopping")
@@ -567,6 +649,9 @@ func (r *Recorder) runEvent(ctx context.Context) error {
 		rec = nil
 	}
 	finalize()
+	if ring != nil {
+		ring.stop()
+	}
 	det.Close()
 	r.log.Logf("motion detector stopped")
 	return nil

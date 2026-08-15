@@ -90,7 +90,15 @@
         // audio kept); the codec is only used when it does not resolve to copy.
         "video": { "codec": "av1_nvenc", "preset": "p5", "rc": "vbr",
                    "cq": 38, "crf": 34, "maxrate": "3M", "g": 30 },
-        "audio": { "codec": "aac", "bitrate": "64k" }
+        "audio": { "codec": "aac", "bitrate": "64k" },
+        // pre_roll_sec > 0 keeps a rolling stream-copy ring buffer of the last
+        // N seconds (one extra ffmpeg per camera, no encoding, a few MB of
+        // disk), so events include the moments before the trigger. The spliced
+        // pre-roll part is re-encoded (a "copy" codec degrades to libx264
+        // while pre_roll_sec is on) and has no timestamp label.
+        "pre_roll_sec": 0,   // 0 = off; recordings start at the trigger
+        "segment_sec": 2     // ring segment length; pre-roll accuracy is within
+                             // one segment (default 2 s)
       }
     }
   ]

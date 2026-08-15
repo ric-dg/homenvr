@@ -150,6 +150,26 @@ func TestValidate(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("Validate(good) = %v", err)
 	}
+
+	// Pre-roll out-of-range values are rejected.
+	preroll := `{ "cameras": [{ "name": "x", "source": "dshow", "device_name": "D",
+		"record": { "pre_roll_sec": 700, "segment_sec": 60 } }] }`
+	if err := os.WriteFile(path, []byte(preroll), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Load(path)
+	if err != nil {
+		t.Fatalf("Load = %v", err)
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate should fail on out-of-range pre-roll values")
+	} else {
+		for _, want := range []string{"pre_roll_sec", "segment_sec"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("Validate error %q missing %q", err, want)
+			}
+		}
+	}
 }
 
 func TestVideoEncodeArgs(t *testing.T) {
