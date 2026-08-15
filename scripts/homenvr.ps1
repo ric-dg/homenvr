@@ -26,17 +26,8 @@ $root = Split-Path -Parent $PSScriptRoot
 
 function Invoke-ElevatedScript {
     param([string]$FilePath, [string[]]$Args2)
-    $outFile = Join-Path $env:TEMP "homenvr-elev-$PID.out.log"
-    $errFile = Join-Path $env:TEMP "homenvr-elev-$PID.err.log"
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $FilePath) + $Args2
-    $p = Start-Process pwsh -Verb RunAs -Wait -PassThru -ArgumentList $argList `
-        -RedirectStandardOutput $outFile -RedirectStandardError $errFile
-    Get-Content -LiteralPath $outFile -ErrorAction SilentlyContinue
-    if ((Get-Item -LiteralPath $errFile -ErrorAction SilentlyContinue).Length -gt 0) {
-        Write-Host '--- stderr ---' -ForegroundColor Yellow
-        Get-Content -LiteralPath $errFile -ErrorAction SilentlyContinue
-    }
-    Remove-Item -LiteralPath $outFile, $errFile -ErrorAction SilentlyContinue
+    $p = Start-Process pwsh -Verb RunAs -Wait -PassThru -ArgumentList $argList
     return $p.ExitCode
 }
 
@@ -65,7 +56,11 @@ switch ($Command.ToLower()) {
 
     { $_ -in 'start', 'stop' } {
         $script = if ($_ -eq 'start') { Join-Path $root 'packaging\service\homenvr-on.ps1' } else { Join-Path $root 'packaging\service\homenvr-off.ps1' }
-        [void](Invoke-ElevatedScript -FilePath $script -Args2 @('-ServiceName', $ServiceName, '-Confirm'))
+        $resPath = Join-Path $env:TEMP 'homenvr-onoff-result.txt'
+        Remove-Item -LiteralPath $resPath -ErrorAction SilentlyContinue
+        [void](Invoke-ElevatedScript -FilePath $script -Args2 @('-ServiceName', $ServiceName, '-Confirm', '-ResultFile', $resPath))
+        Get-Content -LiteralPath $resPath -ErrorAction SilentlyContinue
+        if (-not (Test-Path -LiteralPath $resPath)) { Write-Host 'Elevated script produced no result (UAC declined?).' -ForegroundColor Yellow }
     }
 
     { $_ -in 'restart', 'deploy' } {

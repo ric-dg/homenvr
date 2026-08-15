@@ -4,6 +4,7 @@
 param(
     [string]$ServiceName = 'homenvrd',
     [string]$InstallDir = '',
+    [string]$ResultFile = '',
     [switch]$Confirm
 )
 
@@ -34,8 +35,12 @@ if ($svc -and $svc.Status.ToString() -eq 'Running') {
         if ($info.Config.web) { $web = $info.Config.web.port }
         if ($info.Config.go2rtc) { $api = $info.Config.go2rtc.api_port }
     }
-    Write-Host "HomeNVR running. Panel: http://localhost:$web  Live: http://localhost:$api" -ForegroundColor Green
+    $msg = "OK HomeNVR running. Panel: http://localhost:$web  Live: http://localhost:$api"
+    Write-Host $msg -ForegroundColor Green
+    if ($ResultFile) { $msg | Set-Content -LiteralPath $ResultFile }
 } else {
-    Write-Host "WARNING: still $($svc.Status). Check: sc.exe query $ServiceName" -ForegroundColor Red
+    $msg = "ERR still $($svc.Status). Check: sc.exe query $ServiceName"
+    Write-Host $msg -ForegroundColor Red
+    if ($ResultFile) { $msg | Set-Content -LiteralPath $ResultFile }
     exit 1
 }

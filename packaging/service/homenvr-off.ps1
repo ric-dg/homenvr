@@ -3,6 +3,7 @@
 param(
     [string]$ServiceName = 'homenvrd',
     [string]$InstallDir = '',
+    [string]$ResultFile = '',
     [switch]$Confirm
 )
 
@@ -24,9 +25,13 @@ Stop-HomenvrProcesses -ServiceName $ServiceName
 
 $left = @(Get-HomenvrProcesses -ServiceName $ServiceName)
 if ($left.Count -eq 0) {
-    Write-Host "HomeNVR fully stopped (no leftover processes)." -ForegroundColor Green
+    $msg = 'OK HomeNVR fully stopped (no leftover processes).'
+    Write-Host $msg -ForegroundColor Green
+    if ($ResultFile) { $msg | Set-Content -LiteralPath $ResultFile }
 } else {
-    Write-Host "WARNING: $($left.Count) HomeNVR process(es) still running:" -ForegroundColor Red
+    $msg = "WARN $($left.Count) HomeNVR process(es) still running"
+    Write-Host $msg -ForegroundColor Red
     $left | ForEach-Object { Write-Host "  $($_.Name) pid=$($_.ProcessId)" -ForegroundColor Red }
+    if ($ResultFile) { $msg | Set-Content -LiteralPath $ResultFile }
     exit 1
 }
