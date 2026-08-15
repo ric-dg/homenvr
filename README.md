@@ -149,6 +149,29 @@ Cross-compile (no CGO):
 $env:GOOS="linux"; $env:GOARCH="arm64"; go build -o homenvrd ./cmd/homenvrd
 ```
 
+`go build ./...` passes on Windows, Linux and macOS; the optional tray helper
+(`cmd/homenvrd-tray`) is Windows-only behind a build tag and is skipped on
+other platforms.
+
+## Roadmap
+
+Kept deliberately cheap and settings-gated; nothing here runs unless you turn
+it on.
+
+- **Federation** - multiple HomeNVR hosts share a timeline and clips. The
+  panel API is the seam: cross-host config is untrusted by design, so
+  federation peers would be read-only (status + recordings, no admin).
+- **Tray on Linux/macOS** - the current tray is Windows-only because
+  `DETACHED_PROCESS` and the service model are. Native `libappindicator`
+  (Linux) and a menu-bar status item (macOS) can share the same panel-API
+  actions once those platforms have a deployed daemon.
+- **Pre-roll buffer** - a short pre-event buffer via libx264 flat .ts or the
+  recorder's ring buffer. Breaking change: event and live would share one
+  timeline clock, so multi-camera timestamps interleave.
+- **Detection zones + object detection** - would follow lightNVR, but object
+  detection (ONNX) conflicts with the stdlib-only + efficiency goals, so it
+  stays deferred unless the requirement appears.
+
 ## Conventions
 
 - Stdlib-only for now (no third-party modules until required).
