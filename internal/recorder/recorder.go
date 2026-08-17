@@ -455,7 +455,17 @@ func (r *Recorder) runEvent(ctx context.Context) error {
 		path := filepath.Join(cam.Record.OutDir, name)
 		var rc *proc.Child
 		if pre := ring.files(); len(pre) > 0 {
-			r.log.Logf("pre-roll: splicing %d segment(s) into %s", len(pre), name)
+			var b strings.Builder
+			for _, f := range pre {
+				var sz string
+				if fi, err := os.Stat(f); err == nil {
+					sz = strconv.FormatInt(fi.Size(), 10)
+				} else {
+					sz = "ERR"
+				}
+				fmt.Fprintf(&b, " %s=%s", filepath.Base(f), sz)
+			}
+			r.log.Logf("pre-roll: splicing %d segment(s) into %s[%s]", len(pre), name, b.String())
 			hasAudio := cam.Mic.Enabled && audioAvailable(cam.Mic.RecPort)
 			rc = r.spawn(cam.Name, r.preRollEventCmd(cfg, *cam, path, pre, hasAudio))
 		} else {
