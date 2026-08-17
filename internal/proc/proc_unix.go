@@ -4,6 +4,7 @@ package proc
 
 import (
 	"os"
+	"os/exec"
 	"syscall"
 )
 
@@ -20,4 +21,10 @@ func killTree(p *os.Process) {
 		return
 	}
 	p.Kill()
+}
+
+// KillByName force-kills every process whose image name matches name.
+// Used on startup to reap orphans from a prior crash.
+func KillByName(name string) {
+	exec.Command("pkill", "-f", name).Run()
 }

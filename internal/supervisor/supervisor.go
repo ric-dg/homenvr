@@ -291,6 +291,7 @@ func (s *Supervisor) startGo2rtc(cfg *config.Config) {
 		s.log.Logf("go2rtc binary not found (tools.go2rtc empty and not on PATH)")
 		return
 	}
+	proc.KillByName(filepath.Base(bin))
 	ch := proc.NewChild("go2rtc", cfg.Paths.LogDir)
 	if err := ch.Start([]string{bin, "-c", s.YAMLPath}); err != nil {
 		s.log.Logf("go2rtc start failed: %v", err)
