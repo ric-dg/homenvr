@@ -1,5 +1,3 @@
-"use strict";
-
 const $ = (sel) => document.querySelector(sel);
 
 async function api(path, opts) {
@@ -7,8 +5,10 @@ async function api(path, opts) {
   if (res.status === 204) return null;
   const text = await res.text();
   let data = text;
-  try { data = text ? JSON.parse(text) : null; } catch (_) {}
-  if (!res.ok) throw new Error((data && data.error) || res.statusText);
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch (_) {}
+  if (!res.ok) throw new Error(data?.error || res.statusText);
   return data;
 }
 
@@ -28,25 +28,28 @@ const tabButtons = [...document.querySelectorAll(".tab")];
 function activateTab(tab) {
   const btn = tabButtons.find((b) => b.dataset.tab === tab);
   if (!btn) return false;
-  tabButtons.forEach((b) => b.classList.toggle("active", b === btn));
-  document.querySelectorAll(".panel").forEach((p) =>
-    p.classList.toggle("active", p.id === "tab-" + btn.dataset.tab));
+  tabButtons.forEach((b) => {
+    b.classList.toggle("active", b === btn);
+  });
+  document.querySelectorAll(".panel").forEach((p) => {
+    p.classList.toggle("active", p.id === `tab-${btn.dataset.tab}`);
+  });
   return true;
 }
 for (const btn of tabButtons) {
   btn.addEventListener("click", () => {
     activateTab(btn.dataset.tab);
-    history.replaceState(null, "", "#/" + btn.dataset.tab);
+    history.replaceState(null, "", `#/${btn.dataset.tab}`);
   });
 }
 // Deep links like http://host:8080/#/logs open the right tab.
 if (location.hash.startsWith("#/")) activateTab(location.hash.slice(2));
 
 function fmtSize(n) {
-  if (n >= 1 << 30) return (n / (1 << 30)).toFixed(1) + " GB";
-  if (n >= 1 << 20) return (n / (1 << 20)).toFixed(1) + " MB";
-  if (n >= 1 << 10) return (n / (1 << 10)).toFixed(0) + " KB";
-  return n + " B";
+  if (n >= 1 << 30) return `${(n / (1 << 30)).toFixed(1)} GB`;
+  if (n >= 1 << 20) return `${(n / (1 << 20)).toFixed(1)} MB`;
+  if (n >= 1 << 10) return `${(n / (1 << 10)).toFixed(0)} KB`;
+  return `${n} B`;
 }
 function fmtTime(iso) {
   const d = new Date(iso);
@@ -57,52 +60,125 @@ function fmtTime(iso) {
 
 async function renderStatus() {
   const s = await api("/api/status");
-  $("#live-link").href = "http://" + location.hostname + ":" + s.live_port;
+  $("#live-link").href = `http://${location.hostname}:${s.live_port}`;
 
   const box = $("#tab-status");
   box.replaceChildren();
 
   const g = s.go2rtc;
-  const camRows = s.cameras.map((c) => el("tr",
-    el("td", { text: c.name }),
-    el("td", { class: c.active ? "up" : "down", text: c.active ? "running" : "stopped" }),
-    el("td", { text: c.mic ? "on" : "off" }),
-    el("td", { text: c.mode })));
+  const camRows = s.cameras.map((c) =>
+    el(
+      "tr",
+      el("td", { text: c.name }),
+      el("td", {
+        class: c.active ? "up" : "down",
+        text: c.active ? "running" : "stopped",
+      }),
+      el("td", { text: c.mic ? "on" : "off" }),
+      el("td", { text: c.mode }),
+    ),
+  );
 
   box.append(
-    el("div", { class: "card" },
+    el(
+      "div",
+      { class: "card" },
       el("h2", { text: "Service" }),
-      el("table", {},
-        el("tr", {}, el("td", { text: "Version" }), el("td", { text: s.version })),
-        el("tr", {}, el("td", { text: "Uptime" }), el("td", { text: (s.uptime_ns / 1e9).toFixed(0) + " s" })),
-        el("tr", {}, el("td", { text: "Config" }), el("td", { class: "mono", text: s.config_path })),
-        el("tr", {}, el("td", { text: "Record mode" }), el("td", { text: s.mode })),
-        el("tr", {}, el("td", { text: "go2rtc" }),
-          el("td", {}, el("span", { class: g.running ? "up" : "down", text: g.running ? "running" : "stopped" }),
-            g.running ? " (pid " + g.pid + ")" : "")))),
-      adminControls()),
-    el("div", { class: "card" },
+      el(
+        "table",
+        {},
+        el(
+          "tr",
+          {},
+          el("td", { text: "Version" }),
+          el("td", { text: s.version }),
+        ),
+        el(
+          "tr",
+          {},
+          el("td", { text: "Uptime" }),
+          el("td", { text: `${(s.uptime_ns / 1e9).toFixed(0)} s` }),
+        ),
+        el(
+          "tr",
+          {},
+          el("td", { text: "Config" }),
+          el("td", { class: "mono", text: s.config_path }),
+        ),
+        el(
+          "tr",
+          {},
+          el("td", { text: "Record mode" }),
+          el("td", { text: s.mode }),
+        ),
+        el(
+          "tr",
+          {},
+          el("td", { text: "go2rtc" }),
+          el(
+            "td",
+            {},
+            el("span", {
+              class: g.running ? "up" : "down",
+              text: g.running ? "running" : "stopped",
+            }),
+            g.running ? ` (pid ${g.pid})` : "",
+          ),
+        ),
+      ),
+      adminControls(),
+    ),
+    el(
+      "div",
+      { class: "card" },
       el("h2", { text: "Cameras" }),
-      el("table", {},
-        el("tr", {}, el("th", { text: "Name" }), el("th", { text: "Runner" }), el("th", { text: "Mic" }), el("th", { text: "Mode" })),
-        ...camRows)));
+      el(
+        "table",
+        {},
+        el(
+          "tr",
+          {},
+          el("th", { text: "Name" }),
+          el("th", { text: "Runner" }),
+          el("th", { text: "Mic" }),
+          el("th", { text: "Mode" }),
+        ),
+        ...camRows,
+      ),
+    ),
+  );
 }
 
 // ---------------- admin (service + update) ----------------
 
 function adminControls() {
   const msg = el("span", { id: "svc-msg" });
-  const restartBtn = el("button", { class: "danger", text: "Restart service", onclick: restartService });
-  const retBtn = el("button", { class: "secondary", text: "Run retention", onclick: runRetention });
-  const file = el("input", { type: "file", accept: ".exe,application/octet-stream" });
-  const upBtn = el("button", { class: "secondary", text: "Upload & restart", onclick: () => uploadUpdate(file, msg) });
+  const restartBtn = el("button", {
+    class: "danger",
+    text: "Restart service",
+    onclick: restartService,
+  });
+  const retBtn = el("button", {
+    class: "secondary",
+    text: "Run retention",
+    onclick: runRetention,
+  });
+  const file = el("input", {
+    type: "file",
+    accept: ".exe,application/octet-stream",
+  });
+  const upBtn = el("button", {
+    class: "secondary",
+    text: "Upload & restart",
+    onclick: () => uploadUpdate(file, msg),
+  });
   return el("div", { class: "row" }, restartBtn, retBtn, upBtn, file, msg);
 }
 
 async function restartService() {
   try {
     await api("/api/restart", { method: "POST" });
-    $("#svc-msg").textContent = "restarting…";
+    $("#svc-msg").textContent = "restarting\u2026";
     $("#svc-msg").className = "up";
   } catch (e) {
     $("#svc-msg").textContent = e.message;
@@ -122,15 +198,25 @@ async function runRetention() {
 }
 
 async function uploadUpdate(file, msg) {
-  if (!file.files.length) { msg.textContent = "choose a .exe first"; msg.className = "err"; return; }
-  msg.textContent = "uploading…";
+  if (!file.files.length) {
+    msg.textContent = "choose a .exe first";
+    msg.className = "err";
+    return;
+  }
+  msg.textContent = "uploading\u2026";
   msg.className = "up";
   try {
-    const res = await fetch("/api/update", { method: "POST", body: file.files[0] });
+    const res = await fetch("/api/update", {
+      method: "POST",
+      body: file.files[0],
+    });
     const text = await res.text();
-    let data = text; try { data = text ? JSON.parse(text) : null; } catch (_) {}
-    if (!res.ok) throw new Error((data && data.error) || res.statusText);
-    msg.textContent = "update staged; service restarting…";
+    let data = text;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch (_) {}
+    if (!res.ok) throw new Error(data?.error || res.statusText);
+    msg.textContent = "update staged; service restarting\u2026";
     msg.className = "up";
   } catch (e) {
     msg.textContent = e.message;
@@ -144,10 +230,14 @@ async function renderLogs() {
   const name = $("#log-name").value;
   const msg = $("#log-msg");
   try {
-    const res = await fetch("/api/logs?name=" + encodeURIComponent(name) + "&lines=1000");
+    const res = await fetch(
+      `/api/logs?name=${encodeURIComponent(name)}&lines=1000`,
+    );
     if (!res.ok) {
       let data = await res.text();
-      try { data = JSON.parse(data).error || data; } catch (_) {}
+      try {
+        data = JSON.parse(data).error || data;
+      } catch (_) {}
       throw new Error(data);
     }
     $("#log-view").textContent = await res.text();
@@ -179,25 +269,58 @@ async function renderRecordings() {
   }
 
   for (const [cam, recs] of byCam) {
-    box.append(el("div", { class: "card" },
-      el("h2", { text: cam + " (" + recs.length + ")" }),
-      el("table", {},
-        el("tr", {}, el("th", { text: "File" }), el("th", { text: "Recorded" }), el("th", { text: "Size" })),
-        ...recs.map((rec) => el("tr", {},
-          el("td", {}, el("a", {
-            class: "play",
-            onclick: () => play(rec),
-          }, { text: rec.name })),
-          el("td", { text: fmtTime(rec.mod_time) }),
-          el("td", { text: fmtSize(rec.size) })))));
+    box.append(
+      el(
+        "div",
+        { class: "card" },
+        el("h2", { text: `${cam} (${recs.length})` }),
+        el(
+          "table",
+          {},
+          el(
+            "tr",
+            {},
+            el("th", { text: "File" }),
+            el("th", { text: "Recorded" }),
+            el("th", { text: "Size" }),
+          ),
+          ...recs.map((rec) =>
+            el(
+              "tr",
+              {},
+              el(
+                "td",
+                {},
+                el(
+                  "a",
+                  {
+                    class: "play",
+                    onclick: () => play(rec),
+                  },
+                  { text: rec.name },
+                ),
+              ),
+              el("td", { text: fmtTime(rec.mod_time) }),
+              el("td", { text: fmtSize(rec.size) }),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
 function play(rec) {
   const player = $("#player");
-  const src = "/api/recordings/" + encodeURIComponent(rec.camera) + "/" +
+  const src =
+    "/api/recordings/" +
+    encodeURIComponent(rec.camera) +
+    "/" +
     encodeURIComponent(rec.name);
-  if (player.dataset.src === src) { player.hidden = !player.hidden; return; }
+  if (player.dataset.src === src) {
+    player.hidden = !player.hidden;
+    return;
+  }
   player.dataset.src = src;
   player.src = src;
   player.hidden = false;
@@ -238,7 +361,7 @@ async function refresh() {
     if (tab === "logs") await renderLogs();
   } catch (e) {
     document.querySelector(".panel.active").innerHTML =
-      '<div class="card err">' + e.message + "</div>";
+      `<div class="card err">${e.message}</div>`;
   }
 }
 loadConfig();

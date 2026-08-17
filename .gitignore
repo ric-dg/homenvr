@@ -20,3 +20,7 @@ Thumbs.db
 # Local runtime (mirror of v1: never commit live config or logs)
 config.jsonc
 logs/
+
+# JS tooling
+node_modules/
+bun.lock
