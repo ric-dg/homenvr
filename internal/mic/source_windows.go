@@ -504,7 +504,10 @@ func (s *wasapiSrc) readBlock(buf []byte) error {
 			s.mu.Unlock()
 			return nil
 		}
-		s.drain()
+		if err := s.drain(); err != nil {
+			s.mu.Unlock()
+			return err
+		}
 		if len(s.out)-s.outOff >= len(buf)/2 {
 			copyInt16Bytes(buf, s.out[s.outOff:s.outOff+len(buf)/2])
 			s.outOff += len(buf) / 2
@@ -523,11 +526,17 @@ func (s *wasapiSrc) readBlock(buf []byte) error {
 
 // drain pulls every pending capture packet, converts to mono float, resamples
 // to the configured rate and appends int16 samples. Caller holds s.mu.
-func (s *wasapiSrc) drain() {
+func (s *wasapiSrc) drain() error {
 	for {
+		if s.cap == nil || s.cap.lpVtbl == nil {
+			return fmt.Errorf("capture client invalidated")
+		}
 		var frames uint32
 		if hr := s.cap.getNextPacketSize(&frames); hr != 0 || frames == 0 {
 			break
+		}
+		if s.cap == nil || s.cap.lpVtbl == nil {
+			return fmt.Errorf("capture client invalidated")
 		}
 		var p *byte
 		if hr := s.cap.getBuffer(&p, &frames); hr != 0 {
@@ -553,6 +562,7 @@ func (s *wasapiSrc) drain() {
 		s.in = s.in[n:]
 		s.inPos -= float64(n)
 	}
+	return nil
 }
 
 // packetMono downmixes one capture packet (interleaved mixCh samples) to mono
@@ -593,22 +603,30 @@ func (s *wasapiSrc) packetMono(p *byte, frames uint32) []float32 {
 
 func (s *wasapiSrc) close() {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.closed {
-		s.mu.Unlock()
 		return
 	}
 	s.closed = true
-	s.mu.Unlock()
 
 	setEvent(uintptr(s.evStop))
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.cl.stop()
-	s.cap.release()
-	s.cl.release()
-	closeHandle.Call(uintptr(s.evData))
-	closeHandle.Call(uintptr(s.evStop))
-	s.evData, s.evStop = 0, 0
+	if s.cap != nil {
+		s.cap.release()
+		s.cap = nil
+	}
+	if s.cl != nil {
+		s.cl.release()
+		s.cl = nil
+	}
+	if s.evData != 0 {
+		closeHandle.Call(uintptr(s.evData))
+		s.evData = 0
+	}
+	if s.evStop != 0 {
+		closeHandle.Call(uintptr(s.evStop))
+		s.evStop = 0
+	}
 }
 
 func friendlyName(d *iMMDevice) string {
@@ -690,4 +708,38 @@ func copyInt16Bytes(b []byte, s []int16) {
 		b[i*2] = byte(v)
 		b[i*2+1] = byte(v >> 8)
 	}
+}
+
+// listWasapiDevices returns all active WASAPI capture endpoints as structured
+// AudioDevice values. Uses the same COM enumeration as newWasapi().
+func listWasapiDevices() []AudioDevice {
+	coInitializeEx.Call(0, coinitMultithreaded)
+	var e *iMMDeviceEnumerator
+	hr, _, _ := coCreateInstance.Call(
+		uintptr(unsafe.Pointer(&clsidMMDeviceEnumerator)), 0, clsctxInprocServer,
+		uintptr(unsafe.Pointer(&iidMMDeviceEnumerator)), uintptr(unsafe.Pointer(&e)))
+	if hr != 0 || e == nil {
+		return nil
+	}
+	defer e.release()
+	var col *iMMDeviceCollection
+	if hr2 := e.enumAudioEndpoints(eCapture, devstateActive, &col); hr2 != 0 || col == nil {
+		return nil
+	}
+	defer col.release()
+	var n uint32
+	col.getCount(&n)
+	var devs []AudioDevice
+	for i := uint32(0); i < n; i++ {
+		var d *iMMDevice
+		if hr4 := col.item(i, &d); hr4 != 0 {
+			continue
+		}
+		name := friendlyName(d)
+		d.release()
+		if name != "" {
+			devs = append(devs, AudioDevice{Name: name, Source: "wasapi"})
+		}
+	}
+	return devs
 }

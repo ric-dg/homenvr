@@ -10,10 +10,14 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -25,6 +29,8 @@ var (
 	shell32  = syscall.NewLazyDLL("shell32.dll")
 
 	procGetModuleHandleW    = kernel32.NewProc("GetModuleHandleW")
+	procCreateMutexW        = kernel32.NewProc("CreateMutexW")
+	procReleaseMutex        = kernel32.NewProc("ReleaseMutex")
 	procRegisterClassW      = user32.NewProc("RegisterClassW")
 	procCreateWindowExW     = user32.NewProc("CreateWindowExW")
 	procDefWindowProcW      = user32.NewProc("DefWindowProcW")
@@ -54,9 +60,11 @@ const (
 	wmLButtonDbl  = 0x0203
 	wmRButtonUp   = 0x0205
 	wmContextMenu = 0x007B
+	wmTimer       = 0x0113
 	wmApp         = 0x8000
 
 	wmIconCallback = wmApp + 1
+	timerStatus    = 1
 
 	nimAdd    = 0
 	nimModify = 1
@@ -132,7 +140,20 @@ const (
 	menuExit         = 104
 )
 
-var panelURL string
+var (
+	panelURL       string
+	nid            notifyIconData
+	totalCams      int
+	runningCams    int
+	statusOK       int32 // atomic: 1 = ok, 0 = degraded
+)
+
+// statusSummary is the compact JSON from GET /api/status.
+type statusSummary struct {
+	Cameras []struct {
+		Active bool `json:"active"`
+	} `json:"cameras"`
+}
 
 func fatal(msg string) {
 	t, _ := syscall.UTF16PtrFromString("HomeNVR tray")
@@ -172,6 +193,70 @@ func openURL(u string) {
 	procShellExecuteW.Call(0, uintptr(unsafe.Pointer(toU16("open"))), uintptr(unsafe.Pointer(toU16(u))), 0, 0, swShownormal)
 }
 
+// --- singleton guard ---
+
+func trySingleton() bool {
+	name, _ := syscall.UTF16PtrFromString("Global\\HomeNVR-Tray")
+	h, _, err := procCreateMutexW.Call(0, 1, uintptr(unsafe.Pointer(name)))
+	if h == 0 {
+		return false
+	}
+	// ERROR_ALREADY_EXISTS = 183
+	var errno syscall.Errno
+	if errors.As(err, &errno) && errno == 183 {
+		procReleaseMutex.Call(h)
+		return false
+	}
+	return true
+}
+
+// --- dynamic status ---
+
+func pollStatus(hwnd syscall.Handle) {
+	c := &http.Client{Timeout: 3 * time.Second}
+	resp, err := c.Get(panelURL + "/api/status")
+	if err != nil {
+		atomic.StoreInt32(&statusOK, 0)
+		updateTooltip(hwnd)
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	var st statusSummary
+	if err := json.Unmarshal(body, &st); err != nil {
+		atomic.StoreInt32(&statusOK, 0)
+		updateTooltip(hwnd)
+		return
+	}
+	totalCams = len(st.Cameras)
+	runningCams = 0
+	for _, c := range st.Cameras {
+		if c.Active {
+			runningCams++
+		}
+	}
+	if runningCams == totalCams && totalCams > 0 {
+		atomic.StoreInt32(&statusOK, 1)
+	} else {
+		atomic.StoreInt32(&statusOK, 0)
+	}
+	updateTooltip(hwnd)
+}
+
+func updateTooltip(hwnd syscall.Handle) {
+	tip := "HomeNVR"
+	if totalCams > 0 {
+		tip = fmt.Sprintf("HomeNVR - %d/%d cameras", runningCams, totalCams)
+	}
+	nid.hWnd = syscall.Handle(hwnd)
+	nid.uID = 1
+	nid.uFlags = nifTip
+	copy(nid.szTip[:], u16s(tip))
+	procShellNotifyIconW.Call(nimModify, uintptr(unsafe.Pointer(&nid)))
+}
+
+// --- menu ---
+
 func showMenu(hwnd syscall.Handle) {
 	procSetForegroundWindow.Call(uintptr(hwnd))
 	menu, _, _ := procCreatePopupMenu.Call()
@@ -197,7 +282,6 @@ func showMenu(hwnd syscall.Handle) {
 	procGetCursorPos.Call(uintptr(unsafe.Pointer(&pt)))
 	cmd, _, _ := procTrackPopupMenu.Call(menu, tpmRight|tpmReturn|tpmNonotify, uintptr(pt.x), uintptr(pt.y), 0, uintptr(hwnd), 0)
 	procDestroyMenu.Call(menu)
-	// Menu needs this to dismiss properly.
 	procPostMessageW.Call(uintptr(hwnd), wmNull, 0, 0)
 
 	switch cmd {
@@ -215,8 +299,7 @@ func showMenu(hwnd syscall.Handle) {
 }
 
 func setBalloon(hwnd syscall.Handle) {
-	nid := notifyIconData{cbSize: uint32(unsafe.Sizeof(notifyIconData{}))}
-	nid.hWnd = hwnd
+	nid.hWnd = syscall.Handle(hwnd)
 	nid.uID = 1
 	nid.uFlags = nifInfo
 	nid.dwInfoFlags = niifInfo
@@ -226,6 +309,10 @@ func setBalloon(hwnd syscall.Handle) {
 }
 
 func main() {
+	if !trySingleton() {
+		fatal("Another tray instance is already running.")
+	}
+
 	var panel string
 	flag.StringVar(&panel, "panel", "http://127.0.0.1:8080", "control panel base URL")
 	flag.Parse()
@@ -253,7 +340,7 @@ func main() {
 	}
 	icon, _, _ := procLoadIconW.Call(0, idiApplication)
 
-	nid := notifyIconData{cbSize: uint32(unsafe.Sizeof(notifyIconData{}))}
+	nid = notifyIconData{cbSize: uint32(unsafe.Sizeof(notifyIconData{}))}
 	nid.hWnd = syscall.Handle(hwnd)
 	nid.uID = 1
 	nid.uFlags = nifMessage | nifIcon | nifTip
@@ -265,6 +352,10 @@ func main() {
 	}
 	setBalloon(syscall.Handle(hwnd))
 
+	// Initial status poll + start 30s timer.
+	pollStatus(syscall.Handle(hwnd))
+	procPostMessageW.Call(hwnd, wmTimer, timerStatus, 0)
+
 	var m msg
 	for {
 		r, _, _ := procGetMessageW.Call(uintptr(unsafe.Pointer(&m)), 0, 0, 0)
@@ -274,17 +365,22 @@ func main() {
 		if r == ^uintptr(0) { // GetMessage error
 			break
 		}
-		if m.message == wmIconCallback {
+		switch {
+		case m.message == wmIconCallback:
 			switch m.lParam {
 			case wmRButtonUp, wmContextMenu:
 				showMenu(syscall.Handle(hwnd))
 			case wmLButtonDbl:
 				openURL(panelURL + "/")
 			}
-			continue
+		case m.message == wmTimer && m.wParam == timerStatus:
+			pollStatus(syscall.Handle(hwnd))
+			// Re-arm the 30s timer.
+			procPostMessageW.Call(hwnd, wmTimer, timerStatus, 0)
+		default:
+			procTranslateMessage.Call(uintptr(unsafe.Pointer(&m)))
+			procDispatchMessageW.Call(uintptr(unsafe.Pointer(&m)))
 		}
-		procTranslateMessage.Call(uintptr(unsafe.Pointer(&m)))
-		procDispatchMessageW.Call(uintptr(unsafe.Pointer(&m)))
 	}
 
 	procShellNotifyIconW.Call(nimDelete, uintptr(unsafe.Pointer(&nid)))

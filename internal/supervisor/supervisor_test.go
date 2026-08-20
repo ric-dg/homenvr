@@ -35,11 +35,11 @@ webrtc:
   listen: ":8555"
 
 streams:
-  brio:
-    - exec:C:\ProgramData\scoop\shims\ffmpeg.exe -hide_banner -f dshow -rtbufsize 64M -framerate 15 -video_size 1920x1080 -i "video=Brio 100" -thread_queue_size 512 -f s16le -ar 48000 -ac 1 -i tcp://127.0.0.1:9010 -map 0:v:0 -map 1:a:0 -vf format=yuv420p -c:v h264_nvenc -preset p2 -rc vbr -cq 28 -b:v 0 -maxrate 4M -g 15 -tune ll -bf 0 -c:a aac -b:a 64k -f mpegts -
+  cam1:
+    - exec:C:\ProgramData\scoop\shims\ffmpeg.exe -hide_banner -f dshow -rtbufsize 64M -framerate 15 -video_size 1920x1080 -i "video=" -thread_queue_size 512 -f s16le -ar 48000 -ac 1 -i tcp://127.0.0.1:9010 -map 0:v:0 -map 1:a:0 -vf format=yuv420p -c:v h264_nvenc -preset p2 -rc vbr -cq 28 -b:v 0 -maxrate 4M -g 15 -tune ll -bf 0 -c:a aac -b:a 64k -f mpegts -
 
 preload:
-  brio: video
+  cam1: video
 `
 	if got != want {
 		t.Errorf("BuildYAML mismatch\n--- got ---\n%s\n--- want ---\n%s", got, want)

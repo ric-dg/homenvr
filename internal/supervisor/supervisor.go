@@ -27,14 +27,18 @@ type Supervisor struct {
 	ConfigPath string
 	YAMLPath   string
 
-	log      *ServiceLog
-	cfg      *config.File
-	go2rtc   *proc.Child
-	lastHash string
-	started  time.Time
+	log            *ServiceLog
+	cfg            *config.File
+	go2rtc         *proc.Child
+	lastHash       string
+	lastMode       string
+	started        time.Time
+	system         web.SystemInfo
+	lastCamStart   time.Time
 
 	mu      sync.Mutex // guards runners
 	runners map[string]context.CancelFunc
+	paused  bool
 }
 
 // New loads the config (required) and writes the initial go2rtc.yaml.
@@ -76,6 +80,7 @@ func (s *Supervisor) Status() web.Status {
 		ConfigPath: s.ConfigPath,
 		Mode:       cfg.Record.Mode,
 		LivePort:   cfg.Go2rtc.APIPort,
+		System:     web.CollectSystemInfo(),
 	}
 	if s.go2rtc != nil && !s.go2rtc.Exited() {
 		st.Go2rtc = web.ProcInfo{Running: true, PID: s.go2rtc.Pid(), Uptime: s.go2rtc.Uptime()}
@@ -95,6 +100,7 @@ func (s *Supervisor) Status() web.Status {
 // It also runs the watchdog and retention loops as goroutines.
 func (s *Supervisor) Run(ctx context.Context) error {
 	s.log.Logf("supervisor running (config=%s, yaml=%s)", s.ConfigPath, s.YAMLPath)
+	s.lastMode = s.cfg.Get().Record.Mode
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -211,7 +217,26 @@ func (s *Supervisor) tick(ctx context.Context) {
 	if s.go2rtc == nil {
 		s.startGo2rtc(cfg)
 	}
+
+	if cfg.Record.Mode != s.lastMode {
+		if s.lastMode != "" {
+			s.log.Logf("recording mode changed %q -> %q, restarting cameras", s.lastMode, cfg.Record.Mode)
+			s.mu.Lock()
+			for name, cancel := range s.runners {
+				cancel()
+				delete(s.runners, name)
+			}
+			s.mu.Unlock()
+		}
+		s.lastMode = cfg.Record.Mode
+	}
+
 	s.reconcileCameras(cfg)
+
+	sys := web.CollectSystemInfo()
+	if sys.Memory.UsedPct > 85 {
+		s.dropLowestPriority(cfg)
+	}
 }
 
 // reconcileCameras starts a runner goroutine for each newly-seen camera and
@@ -219,7 +244,14 @@ func (s *Supervisor) tick(ctx context.Context) {
 // per-camera mic feeder and recording loop; they re-read config internally, so
 // only the camera set (add/remove) needs reconciliation here.
 func (s *Supervisor) reconcileCameras(cfg *config.Config) {
+	s.mu.Lock()
+	paused := s.paused
+	s.mu.Unlock()
+	if paused {
+		return
+	}
 	seen := map[string]bool{}
+	started := false
 	for _, cam := range cfg.Cameras {
 		seen[cam.Name] = true
 		s.mu.Lock()
@@ -228,12 +260,20 @@ func (s *Supervisor) reconcileCameras(cfg *config.Config) {
 		if ok {
 			continue
 		}
+		if started {
+			continue
+		}
+		if elapsed := time.Since(s.lastCamStart); elapsed < 2*time.Second {
+			continue
+		}
 		ctx, cancel := context.WithCancel(context.Background())
 		s.mu.Lock()
 		s.runners[cam.Name] = cancel
 		s.mu.Unlock()
+		s.lastCamStart = time.Now()
 		s.log.Logf("camera %q runner starting", cam.Name)
 		go s.runCamera(cam.Name, ctx)
+		started = true
 	}
 	s.mu.Lock()
 	for name, cancel := range s.runners {
@@ -266,6 +306,12 @@ func (s *Supervisor) runCamera(name string, ctx context.Context) {
 				defer wg.Done()
 				mic.New(s.cfg, name, s.log, ffmpeg, logDir).Run(ctx)
 			}()
+		}
+		if cfg.Record.Mode == "none" {
+			s.log.Logf("camera %q: live-only mode (no recording)", name)
+			<-ctx.Done()
+			wg.Wait()
+			return
 		}
 		recDone := make(chan struct{})
 		go func() {
@@ -329,4 +375,66 @@ func (s *Supervisor) Shutdown() {
 	s.runners = map[string]context.CancelFunc{}
 	s.mu.Unlock()
 	s.log.Logf("service stopped")
+}
+
+func (s *Supervisor) StopAll() {
+	s.log.Logf("stop-all: stopping go2rtc and all camera runners")
+	if s.go2rtc != nil {
+		s.go2rtc.Stop()
+		s.go2rtc = nil
+	}
+	s.mu.Lock()
+	for name, cancel := range s.runners {
+		s.log.Logf("stop-all: camera %q runner stopping", name)
+		cancel()
+	}
+	s.runners = map[string]context.CancelFunc{}
+	s.paused = true
+	s.mu.Unlock()
+	s.log.Logf("stop-all: done")
+}
+
+func (s *Supervisor) StartAll() {
+	s.log.Logf("start-all: resuming camera reconciliation")
+	s.mu.Lock()
+	s.paused = false
+	s.lastMode = ""
+	s.mu.Unlock()
+}
+
+func (s *Supervisor) dropLowestPriority(cfg *config.Config) {
+	type candidate struct {
+		name     string
+		priority int
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var worst *candidate
+	for name := range s.runners {
+		cam := cfg.Camera(name)
+		if cam == nil {
+			continue
+		}
+		p := cam.Priority
+		if p == 0 {
+			p = 5
+		}
+		if worst == nil || p < worst.priority {
+			worst = &candidate{name: name, priority: p}
+		}
+	}
+	if worst == nil || worst.priority >= 5 {
+		return
+	}
+	s.log.Logf("memory pressure (%.0f%%) -> dropping camera %q (priority %d)",
+		CollectMemoryPct(), worst.name, worst.priority)
+	if cancel, ok := s.runners[worst.name]; ok {
+		cancel()
+		delete(s.runners, worst.name)
+	}
+}
+
+func CollectMemoryPct() float64 {
+	sys := web.CollectSystemInfo()
+	return sys.Memory.UsedPct
 }

@@ -15,6 +15,7 @@ import (
 	"math"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -48,6 +49,7 @@ type Feeder struct {
 	mu        sync.Mutex
 	curKey    string
 	src       captureSource
+	dc        dcBlocker
 	listeners []net.Listener
 	clients   map[string]map[*client]bool
 	quit      chan struct{}
@@ -112,6 +114,7 @@ func (f *Feeder) Run(ctx context.Context) {
 			}
 			f.stopAll()
 			f.curKey = key
+			f.dc = dcBlocker{}
 			if err := f.start(mic); err != nil {
 				f.log.Logf("mic [%s] start failed: %v (retrying in 2s)", f.name, err)
 				f.curKey = ""
@@ -130,10 +133,21 @@ func (f *Feeder) Run(ctx context.Context) {
 		}
 
 		block := make([]byte, mic.BlockSize*mic.Channels*2)
-		if err := f.src.readBlock(block); err != nil {
-			f.log.Logf("mic [%s] capture read failed: %v", f.name, err)
-			f.stopAll()
-			f.curKey = ""
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					f.log.Logf("mic [%s] capture panicked: %v (device lost?)", f.name, r)
+					f.stopAll()
+					f.curKey = ""
+				}
+			}()
+			if err := f.src.readBlock(block); err != nil {
+				f.log.Logf("mic [%s] capture read failed: %v", f.name, err)
+				f.stopAll()
+				f.curKey = ""
+			}
+		}()
+		if f.curKey == "" {
 			sleepctx.Sleep(ctx, 2*time.Second)
 			continue
 		}
@@ -142,7 +156,12 @@ func (f *Feeder) Run(ctx context.Context) {
 		if cam == nil {
 			return
 		}
-		gained := applyGain(int16s(block), cam.Mic.Gain)
+		s := int16s(block)
+		if cam.Mic.DCBlock {
+			f.dc.process(s)
+		}
+		noiseGate(s, cam.Mic.NoiseGate)
+		gained := applyGain(s, cam.Mic.Gain)
 		rms := blockRMS(gained)
 		f.fanout("live", bytes16(gained))
 		f.fanout("rec", bytes16(gained))
@@ -152,10 +171,28 @@ func (f *Feeder) Run(ctx context.Context) {
 	}
 }
 
+func (f *Feeder) autoDetectMic() string {
+	cam := f.cfg.Get().Camera(f.name)
+	if cam == nil || cam.DeviceName == "" {
+		return ""
+	}
+	for _, d := range ListAudioDevices() {
+		low := strings.ToLower(d.Name)
+		if strings.Contains(low, strings.ToLower(cam.DeviceName)) {
+			return d.Name
+		}
+	}
+	return ""
+}
+
 // start opens the capture source and the three TCP servers.
 func (f *Feeder) start(mic config.Mic) error {
 	if mic.DeviceName == "" {
-		return fmt.Errorf("mic device_name is empty")
+		mic.DeviceName = f.autoDetectMic()
+		if mic.DeviceName == "" {
+			return fmt.Errorf("mic device_name is empty (no matching audio device found)")
+		}
+		f.log.Logf("mic [%s] auto-detected device: %s", f.name, mic.DeviceName)
 	}
 	src, err := newCapture(f.cfg, f.name, f.log, f.ffmpeg, f.logDir, mic)
 	if err != nil {
@@ -271,6 +308,35 @@ func bytes16(s []int16) []byte {
 		binary.LittleEndian.PutUint16(b[i*2:], uint16(v))
 	}
 	return b
+}
+
+type dcBlocker struct{ px, py float64 }
+
+func (d *dcBlocker) process(samples []int16) {
+	const alpha = 0.95
+	for i, x := range samples {
+		v := float64(int32(x))
+		d.py = v - d.px + alpha*d.py
+		d.px = v
+		samples[i] = int16(int32(d.py))
+	}
+}
+
+func noiseGate(samples []int16, threshold uint16) {
+	if threshold == 0 {
+		return
+	}
+	var sum float32
+	for _, s := range samples {
+		f := float32(s)
+		sum += f * f
+	}
+	rms := uint16(int(math.Sqrt(float64(sum / float32(len(samples))))))
+	if rms < threshold {
+		for i := range samples {
+			samples[i] = 0
+		}
+	}
 }
 
 // applyGain applies the digital mic gain and clips to int16 range, mirroring

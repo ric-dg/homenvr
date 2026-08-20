@@ -97,10 +97,10 @@ $exe = Join-Path $repo "homenvrd.exe"
 $trayExe = Join-Path $repo "homenvrd-tray.exe"
 if (-not $NoBuild) {
     Write-Host "Building homenvrd.exe..."
-    & go build -o $exe ./cmd/homenvrd
+    & go build -ldflags "-H windowsgui" -o $exe ./cmd/homenvrd
     if ($LASTEXITCODE -ne 0) { throw "go build failed" }
     Write-Host "Building homenvrd-tray.exe..."
-    & go build -o $trayExe ./cmd/homenvrd-tray
+    & go build -ldflags "-H windowsgui" -o $trayExe ./cmd/homenvrd-tray
     if ($LASTEXITCODE -ne 0) { throw "go build (tray) failed" }
 }
 

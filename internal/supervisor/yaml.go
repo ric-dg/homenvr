@@ -46,7 +46,11 @@ func BuildYAML(cfg *config.Config) string {
 		// Stream copy (live "codec: copy", the low-RAM SBC path) cannot take
 		// a pixel-format filter.
 		if cfg.ResolvedCodec(cam.Live.Video.Codec) != "copy" {
-			enc = "-vf format=yuv420p " + enc
+			vf := "format=yuv420p"
+			if img := cam.Image.ImageFilter(); img != "" {
+				vf = img + "," + vf
+			}
+			enc = "-vf " + vf + " " + enc
 		}
 		execLine := fmt.Sprintf("exec:%s -hide_banner %s %s %s%s -f mpegts -",
 			ff, videoIn, maps, enc, streamAud)

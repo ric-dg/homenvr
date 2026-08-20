@@ -35,7 +35,7 @@ func (r *Recorder) startRing(cam config.Camera) *prerollRing {
 		segSec = 2
 	}
 	keep := int(math.Ceil(float64(cam.Record.PreRollSec)/float64(segSec))) + 1
-	dir := filepath.Join(cam.Record.OutDir, ".preroll-"+cam.Record.Prefix)
+	dir := filepath.Join(r.cfg.Get().RecordOutDir(&cam), ".preroll-"+cam.Record.Prefix)
 	os.RemoveAll(dir)
 	os.MkdirAll(dir, 0o755)
 	cfg := r.cfg.Get()

@@ -90,6 +90,8 @@ type Mic struct {
 	Channels   int     `json:"channels"`
 	BlockSize  int     `json:"block_size"`
 	Gain       float64 `json:"gain"`
+	DCBlock    bool    `json:"dc_block"`
+	NoiseGate  uint16  `json:"noise_gate"`
 	LivePort   int     `json:"live_port"`
 	RecPort    int     `json:"rec_port"`
 	CtlPort    int     `json:"ctl_port"`
@@ -106,6 +108,16 @@ type Motion struct {
 	PostRollSec    float64 `json:"post_roll_sec"`
 	EventCapSec    float64 `json:"event_cap_sec"`
 	RestartBackoff float64 `json:"restart_backoff_sec"`
+	Zones          []Zone  `json:"zones,omitempty"`
+}
+
+type Zone struct {
+	Points []Point `json:"points"`
+}
+
+type Point struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
 }
 
 type Sound struct {
@@ -161,6 +173,54 @@ type Camera struct {
 	Motion     Motion    `json:"motion"`
 	Sound      Sound     `json:"sound"`
 	Record     CamRecord `json:"record"`
+	Image      Image     `json:"image"`
+	Priority   int       `json:"priority,omitempty"`
+	Detection  string    `json:"detection,omitempty"`
+}
+
+type Image struct {
+	Brightness float64 `json:"brightness"`
+	Contrast   float64 `json:"contrast"`
+	Saturation float64 `json:"saturation"`
+	Hue        float64 `json:"hue"`
+	Gamma      float64 `json:"gamma"`
+}
+
+func (img Image) ImageFilter() string {
+	if img == (Image{}) {
+		return ""
+	}
+	parts := []string{}
+	if img.Brightness != 0 {
+		parts = append(parts, fmt.Sprintf("brightness=%.2f", img.Brightness))
+	}
+	if img.Contrast != 0 {
+		parts = append(parts, fmt.Sprintf("contrast=%.2f", img.Contrast))
+	}
+	if img.Saturation != 0 {
+		parts = append(parts, fmt.Sprintf("saturation=%.2f", img.Saturation))
+	}
+	if img.Hue != 0 {
+		parts = append(parts, fmt.Sprintf("hue=%.2f", img.Hue))
+	}
+	if img.Gamma != 0 {
+		parts = append(parts, fmt.Sprintf("gamma=%.2f", img.Gamma))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "eq=" + strings.Join(parts, ":")
+}
+
+// RecordOutDir returns the effective recording output directory for a camera.
+func (c *Config) RecordOutDir(cam *Camera) string {
+	if cam.Record.OutDir != "" {
+		return cam.Record.OutDir
+	}
+	if c.Paths.RecordDir != "" {
+		return c.Paths.RecordDir
+	}
+	return "."
 }
 
 type Record struct {
@@ -172,8 +232,9 @@ type Record struct {
 }
 
 type Paths struct {
-	LogDir   string `json:"log_dir"`
-	RTSPHost string `json:"rtsp_host"`
+	LogDir    string `json:"log_dir"`
+	RTSPHost  string `json:"rtsp_host"`
+	RecordDir string `json:"record_dir"`
 }
 
 type Log struct {
@@ -186,8 +247,8 @@ type Log struct {
 type Tools struct {
 	FFmpeg string `json:"ffmpeg"`
 	Go2rtc string `json:"go2rtc"`
-	Python string `json:"python"`
 	Pwsh   string `json:"pwsh"`
+	Editor string `json:"editor"`
 }
 
 type Monitor struct {
@@ -198,11 +259,11 @@ type Monitor struct {
 }
 
 // DefaultCamera returns the v1 per-camera template, used to complete any
-// partial camera entry.
+// partial camera entry. Device names are empty so callers can auto-detect.
 func DefaultCamera() Camera {
 	zero := 0
 	return Camera{
-		Name: "brio", Source: "dshow", DeviceName: "Brio 100",
+		Name: "cam1", Source: "dshow", DeviceName: "",
 		Width: 1920, Height: 1080, FPS: 15, RTBufSize: "64M",
 		Live: Live{
 			Video: Video{
@@ -212,8 +273,9 @@ func DefaultCamera() Camera {
 			Audio: Audio{Codec: "aac", Bitrate: "64k"},
 		},
 		Mic: Mic{
-			Enabled: true, DeviceName: "Brio 100",
-			SampleRate: 48000, Channels: 1, BlockSize: 960, Gain: 8,
+			Enabled: true, DeviceName: "",
+			SampleRate: 48000, Channels: 1, BlockSize: 960, Gain: 2,
+			DCBlock: true, NoiseGate: 0,
 			LivePort: 9010, RecPort: 9011, CtlPort: 9012,
 		},
 		Motion: Motion{
@@ -226,7 +288,7 @@ func DefaultCamera() Camera {
 			HoldBlocks: 4, DropBlocks: 30,
 		},
 		Record: CamRecord{
-			Enabled: true, Prefix: "brio", OutDir: "E:\\CCTV",
+			Enabled: true, Prefix: "cam1", OutDir: "",
 			PreRollSec: 0, SegmentSec: 2,
 			Video: Video{
 				Codec: "av1_nvenc", Preset: "p5", RC: "vbr",
@@ -234,6 +296,7 @@ func DefaultCamera() Camera {
 			},
 			Audio: Audio{Codec: "aac", Bitrate: "64k"},
 		},
+		Priority: 5,
 	}
 }
 
@@ -356,9 +419,9 @@ func (c *Config) Validate() error {
 		}
 	}
 	switch c.Record.Mode {
-	case "event", "continuous", "combined":
+	case "event", "continuous", "combined", "none":
 	default:
-		errs = append(errs, fmt.Sprintf("record.mode %q is invalid (want event|continuous|combined)", c.Record.Mode))
+		errs = append(errs, fmt.Sprintf("record.mode %q is invalid (want event|continuous|combined|none)", c.Record.Mode))
 	}
 	if b := c.Web.Bind; b != "" {
 		if strings.ContainsAny(b, " :/") {

@@ -233,7 +233,7 @@ func (r *Recorder) continuousCmd(cfg *config.Config, cam config.Camera) []string
 	if hasAudio {
 		cmd = append(cmd, "-c:a", cam.Record.Audio.Codec, "-b:a", cam.Record.Audio.Bitrate)
 	}
-	cmd = append(cmd, segmentArgs(cam.Record.OutDir, cam.Record.Prefix)...)
+	cmd = append(cmd, segmentArgs(cfg.RecordOutDir(&cam), cam.Record.Prefix)...)
 	return cmd
 }
 
@@ -300,7 +300,7 @@ func (r *Recorder) combinedCmd(cfg *config.Config) ([]string, string) {
 	if len(ain) > 0 {
 		cmd = append(cmd, "-c:a", "aac", "-b:a", "128k")
 	}
-	combinedDir := filepath.Join(cams[0].Record.OutDir, "combined")
+	combinedDir := filepath.Join(cfg.RecordOutDir(&cams[0]), "combined")
 	cmd = append(cmd, segmentArgs(combinedDir, "combined")...)
 	return cmd, cams[0].Name
 }
@@ -374,9 +374,10 @@ func (r *Recorder) cleanup(now time.Time) {
 	if cam == nil {
 		return
 	}
-	dirs := []string{cam.Record.OutDir}
+	recDir := cfg.RecordOutDir(cam)
+	dirs := []string{recDir}
 	if cfg.Record.Mode == "combined" {
-		dirs = append(dirs, filepath.Join(cam.Record.OutDir, "combined"))
+		dirs = append(dirs, filepath.Join(recDir, "combined"))
 	}
 	retention.Run(func(msg string) { r.log.Logf("%s", msg) }, dirs, cfg.Record.RetainHours, cfg.Record.RetainMB, now)
 }
@@ -451,8 +452,9 @@ func (r *Recorder) runEvent(ctx context.Context) error {
 			finalTS = now.Format("20060102-150405")
 		}
 		name := cam.Record.Prefix + "-" + finalTS + ".mp4"
-		os.MkdirAll(cam.Record.OutDir, 0o755)
-		path := filepath.Join(cam.Record.OutDir, name)
+		recDir := cfg.RecordOutDir(cam)
+		os.MkdirAll(recDir, 0o755)
+		path := filepath.Join(recDir, name)
 		var rc *proc.Child
 		if pre := ring.files(); len(pre) > 0 {
 			var b strings.Builder
@@ -501,14 +503,15 @@ func (r *Recorder) runEvent(ctx context.Context) error {
 		if cam == nil {
 			return
 		}
-		newPath := filepath.Join(cam.Record.OutDir,
+		recDir := cfg.RecordOutDir(cam)
+		newPath := filepath.Join(recDir,
 			eventName(cam.Record.Prefix, activity, finalTS, 1))
 		suffix := 2
 		for newPath != curPath {
 			if _, err := os.Stat(newPath); err != nil {
 				break
 			}
-			newPath = filepath.Join(cam.Record.OutDir,
+			newPath = filepath.Join(recDir,
 				eventName(cam.Record.Prefix, activity, finalTS, suffix))
 			suffix++
 		}

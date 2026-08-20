@@ -68,7 +68,7 @@ switch ($Command.ToLower()) {
             $staged = Join-Path $env:TEMP 'homenvr-deploy\homenvrd.exe'
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $staged) | Out-Null
             Push-Location $root
-            try { & go build -o $staged ./cmd/homenvrd } finally { Pop-Location }
+            try { & go build -ldflags "-H windowsgui" -o $staged ./cmd/homenvrd } finally { Pop-Location }
             if ($LASTEXITCODE -ne 0) { Write-Host 'go build failed - is Go on PATH?' -ForegroundColor Red; exit 1 }
             Write-Host "built $staged"
             $newExe = @('-NewExe', $staged)

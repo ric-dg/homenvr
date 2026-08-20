@@ -112,7 +112,7 @@ func TestConfigGetPut(t *testing.T) {
 
 	// Valid edit round-trips and lands on disk.
 	edit := `{ "web": { "port": 8081 }, "record": { "mode": "continuous" },
-  "cameras": [ { "name": "front", "record": { "out_dir": "/tmp/x" } } ] }`
+  "cameras": [ { "name": "front", "device_name": "Some Cam", "record": { "out_dir": "/tmp/x" } } ] }`
 	rec = doReq(t, s, "PUT", "/api/config", edit)
 	if rec.Code != 200 {
 		t.Fatalf("PUT valid = %d: %s", rec.Code, rec.Body.String())

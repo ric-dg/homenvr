@@ -40,12 +40,27 @@
     </div>
   </section>
   <section id="tab-config" class="panel">
-    <div class="toolbar">
-      <button id="cfg-save">Save &amp; reload</button>
-      <button id="cfg-reload">Revert</button>
-      <span id="cfg-msg"></span>
+    <div class="toolbar sticky-toolbar">
+      <div class="toolbar-left">
+        <button id="cfg-save">Save &amp; reload</button>
+        <button id="cfg-reload" class="secondary">Revert</button>
+        <span id="unsaved-dot" class="unsaved-dot" hidden title="Unsaved changes"></span>
+        <span id="cfg-msg"></span>
+      </div>
+      <div class="toolbar-right">
+        <button id="cfg-export" class="secondary toggle-btn" onclick="">Export</button>
+        <button id="cfg-import" class="secondary toggle-btn" onclick="">Import</button>
+        <div class="view-toggle">
+          <button id="cfg-view-form" class="toggle-btn active" onclick="">Form</button>
+          <button id="cfg-view-raw" class="toggle-btn" onclick="">Raw</button>
+        </div>
+        <button id="cfg-adv-toggle" class="secondary toggle-btn" onclick="">Advanced</button>
+      </div>
     </div>
-    <textarea id="cfg-text" spellcheck="false"></textarea>
+    <div id="cfg-form"></div>
+    <div id="cfg-text-wrap" hidden>
+      <textarea id="cfg-text" spellcheck="false"></textarea>
+    </div>
   </section>
 </main>
 

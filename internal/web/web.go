@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/ric-dg/homenvr/internal/config"
+	"github.com/ric-dg/homenvr/internal/mic"
 )
 
 //go:embed static
@@ -59,6 +60,7 @@ type Status struct {
 	Go2rtc     ProcInfo      `json:"go2rtc"`
 	LivePort   int           `json:"live_port"`
 	Cameras    []CamInfo     `json:"cameras"`
+	System     SystemInfo    `json:"system"`
 }
 
 // StatusProvider is implemented by the supervisor, which owns the runtime
@@ -91,6 +93,8 @@ type Options struct {
 	// RunRetention, when set, is invoked by POST /api/retention/run. Nil
 	// disables that endpoint.
 	RunRetention func()
+	OnStopAll    func()
+	OnStartAll   func()
 }
 
 // Server is the embedded control panel.
@@ -116,6 +120,10 @@ func New(cfg *config.File, opts Options) *Server {
 	mux.HandleFunc("POST /api/retention/run", s.handleRunRetention)
 	mux.HandleFunc("GET /api/logs", s.handleLogs)
 	mux.HandleFunc("POST /api/update", s.handleUpdate)
+	mux.HandleFunc("GET /api/devices", s.handleDevices)
+	mux.HandleFunc("POST /api/stop-all", s.handleStopAll)
+	mux.HandleFunc("POST /api/start-all", s.handleStartAll)
+	mux.HandleFunc("GET /api/mic-calibrate", s.handleMicCalibrate)
 	s.mux = &http.Server{Handler: mux}
 	return s
 }
@@ -210,7 +218,7 @@ func (s *Server) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid config: "+err.Error())
 		return
 	}
-	if err := writeConfigFile(s.opts.ConfigPath, data); err != nil {
+	if err := s.cfg.Save(data); err != nil {
 		writeErr(w, http.StatusInternalServerError, "save failed: "+err.Error())
 		return
 	}
@@ -218,23 +226,44 @@ func (s *Server) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"ok": "saved"})
 }
 
-// writeConfigFile writes the config atomically (temp file + rename) so a
-// crash mid-write can never leave a truncated config that the reloader would
-// reject.
-func writeConfigFile(path string, data []byte) error {
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return err
+// handleDevices returns detected video/audio devices and available ffmpeg
+// encoders, so the settings form can show real dropdown options.
+func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
+	cfg := s.cfg.Get()
+	type devResp struct {
+		Video    []mic.VideoDevice `json:"video"`
+		Audio    []mic.AudioDevice `json:"audio"`
+		Encoders []string          `json:"encoders"`
+		NVENC    bool              `json:"nvenc"`
 	}
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		os.Remove(tmp)
-		return err
+	resp := devResp{
+		Video:    mic.ListVideoDevices(),
+		Audio:    mic.ListAudioDevices(),
+		NVENC:    cfg.Encoders.NVENC,
+		Encoders: cfg.Encoders.CPU,
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
-		return err
+	if cfg.Encoders.NVENC {
+		resp.Encoders = append([]string{"h264_nvenc", "av1_nvenc", "hevc_nvenc"}, resp.Encoders...)
 	}
-	return nil
+	writeJSON(w, resp)
+}
+
+func (s *Server) handleStopAll(w http.ResponseWriter, r *http.Request) {
+	if s.opts.OnStopAll == nil {
+		writeErr(w, http.StatusNotImplemented, "stop-all not available")
+		return
+	}
+	s.opts.OnStopAll()
+	writeJSON(w, map[string]string{"ok": "stopped"})
+}
+
+func (s *Server) handleStartAll(w http.ResponseWriter, r *http.Request) {
+	if s.opts.OnStartAll == nil {
+		writeErr(w, http.StatusNotImplemented, "start-all not available")
+		return
+	}
+	s.opts.OnStartAll()
+	writeJSON(w, map[string]string{"ok": "started"})
 }
 
 type Recording struct {

@@ -64,14 +64,21 @@ func (c *Config) probeEncoders() {
 
 func scanEncoders(s string) EncoderProbe {
 	var p EncoderProbe
+	seen := map[string]bool{}
 	for _, line := range strings.Split(s, "\n") {
 		switch {
 		case strings.Contains(line, "_nvenc"):
 			p.NVENC = true
 		case strings.Contains(line, "libx264"):
-			p.CPU = append(p.CPU, "libx264")
+			if !seen["libx264"] {
+				p.CPU = append(p.CPU, "libx264")
+				seen["libx264"] = true
+			}
 		case strings.Contains(line, "libsvtav1"):
-			p.CPU = append(p.CPU, "libsvtav1")
+			if !seen["libsvtav1"] {
+				p.CPU = append(p.CPU, "libsvtav1")
+				seen["libsvtav1"] = true
+			}
 		}
 	}
 	return p

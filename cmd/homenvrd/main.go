@@ -38,11 +38,12 @@ func main() {
 		return
 	}
 
-	cfg, err := config.Load(*configPath)
+	cfgFile, err := config.NewFile(*configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "homenvrd: config: %v\n", err)
 		os.Exit(1)
 	}
+	cfg := cfgFile.Get()
 
 	if *dump {
 		b, err := json.MarshalIndent(cfg, "", "  ")
@@ -90,6 +91,8 @@ func main() {
 		OnRestart:    func() { restartAfter = true; stop() },
 		OnUpdate:     func() { updateAfter = true; stop() },
 		RunRetention: svc.RunRetentionNow,
+		OnStopAll:    svc.StopAll,
+		OnStartAll:   svc.StartAll,
 	})
 	go func() {
 		if err := panel.Start(ctx); err != nil {

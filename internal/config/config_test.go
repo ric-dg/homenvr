@@ -38,7 +38,7 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Record.Mode != "event" || cfg.Record.RetainHours != 72 {
 		t.Errorf("record defaults wrong: %+v", cfg.Record)
 	}
-	if len(cfg.Cameras) != 1 || cfg.Cameras[0].Name != "brio" {
+	if len(cfg.Cameras) != 1 || cfg.Cameras[0].Name != "cam1" {
 		t.Errorf("camera defaults wrong: %+v", cfg.Cameras)
 	}
 	if cfg.Cameras[0].Record.Video.Codec != "av1_nvenc" {
@@ -263,7 +263,7 @@ func hasCodec(s []string, want string) bool {
 func TestCameraURL(t *testing.T) {
 	cfg, _ := Load(filepath.Join(t.TempDir(), "missing.jsonc"))
 	got := cfg.CameraURL(cfg.Cameras[0])
-	want := "rtsp://127.0.0.1:8554/brio?rw_timeout=8000000"
+	want := "rtsp://127.0.0.1:8554/cam1?rw_timeout=8000000"
 	if got != want {
 		t.Errorf("CameraURL = %q, want %q", got, want)
 	}
