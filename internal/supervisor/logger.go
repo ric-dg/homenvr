@@ -89,6 +89,13 @@ func (l *ServiceLog) Dir() string {
 	return l.dir
 }
 
+// Close flushes and closes the underlying file.
+func (l *ServiceLog) Close() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.closeLocked()
+}
+
 func (l *ServiceLog) open() error {
 	if err := os.MkdirAll(l.dir, 0o755); err != nil {
 		return err
