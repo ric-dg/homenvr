@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/ric-dg/homenvr/internal/config"
 	"github.com/ric-dg/homenvr/internal/mic"
 	"github.com/ric-dg/homenvr/internal/proc"
@@ -470,45 +471,81 @@ func CollectMemoryPct() float64 {
 	return sys.Memory.UsedPct
 }
 
-// watchGo2rtcLogs polls go2rtc log files every 2s and pushes new lines via SSE.
+// watchGo2rtcLogs uses fsnotify to push new go2rtc log lines via SSE.
 func (s *Supervisor) watchGo2rtcLogs(ctx context.Context) {
-	type tracked struct {
-		name string // SSE log name ("go2rtc" or "go2rtc.err")
-		path string // filename on disk
-		size int64
+	cfg := s.cfg.Get()
+	logDir := cfg.Paths.LogDir
+
+	// Map filename -> SSE name.
+	names := map[string]string{
+		"go2rtc.out.log": "go2rtc",
+		"go2rtc.err.log": "go2rtc.err",
 	}
-	files := []tracked{
-		{name: "go2rtc", path: "go2rtc.out.log"},
-		{name: "go2rtc.err", path: "go2rtc.err.log"},
+	// Track read offsets per file.
+	offsets := map[string]int64{}
+	for name := range names {
+		if st, err := os.Stat(filepath.Join(logDir, name)); err == nil {
+			offsets[name] = st.Size()
+		}
 	}
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		s.log.Logf("go2rtc log watcher: %v", err)
+		return
+	}
+	defer watcher.Close()
+
+	if err := watcher.Add(logDir); err != nil {
+		s.log.Logf("go2rtc log watcher add: %v", err)
+		return
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case evt, ok := <-watcher.Events:
+			if !ok {
+				return
+			}
+			base := filepath.Base(evt.Name)
+			sseName, ok := names[base]
+			if !ok {
+				continue
+			}
+			if evt.Op&(fsnotify.Write|fsnotify.Create) == 0 {
+				continue
+			}
+			s.ttailLog(logDir, base, sseName, offsets)
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return
+			}
+			s.log.Logf("go2rtc log watcher error: %v", err)
 		}
-		cfg := s.cfg.Get()
-		logDir := cfg.Paths.LogDir
-		for i := range files {
-			f := &files[i]
-			fullPath := filepath.Join(logDir, f.path)
-			st, err := os.Stat(fullPath)
-			if err != nil || st.Size() <= f.size {
-				continue
-			}
-			// Read new bytes.
-			data, err := tailBytes(fullPath, st.Size()-f.size)
-			if err != nil {
-				continue
-			}
-			f.size = st.Size()
-			for _, line := range splitLines(string(data)) {
-				if line != "" {
-					s.logBus.Send(web.LogEvent{Name: f.name, Line: line})
-				}
-			}
+	}
+}
+
+// ttailLog reads new bytes from a log file since the last known offset.
+func (s *Supervisor) ttailLog(logDir, fileName, sseName string, offsets map[string]int64) {
+	fullPath := filepath.Join(logDir, fileName)
+	st, err := os.Stat(fullPath)
+	if err != nil {
+		return
+	}
+	prev := offsets[fileName]
+	if st.Size() <= prev {
+		return
+	}
+	data, err := tailBytes(fullPath, st.Size()-prev)
+	if err != nil {
+		return
+	}
+	offsets[fileName] = st.Size()
+	for _, line := range splitLines(string(data)) {
+		if line != "" {
+			s.logBus.Send(web.LogEvent{Name: sseName, Line: line})
 		}
 	}
 }
