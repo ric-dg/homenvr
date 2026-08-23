@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -22,14 +23,77 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ric-dg/homenvr/internal/config"
 	"github.com/ric-dg/homenvr/internal/mic"
 )
 
+// securityHeaders wraps an http.Handler with standard security headers.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; media-src 'self' blob:; connect-src 'self'")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// requestLogger wraps an http.Handler with structured request logging.
+func requestLogger(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(sw, r)
+		if r.URL.Path != "/api/events" { // skip SSE keepalive noise
+			slog.Info("web: request",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", sw.status,
+				"duration", time.Since(start).String(),
+				"remote", r.RemoteAddr,
+			)
+		}
+	})
+}
+
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+	wrote  bool
+}
+
+func (sw *statusWriter) WriteHeader(code int) {
+	if !sw.wrote {
+		sw.status = code
+		sw.wrote = true
+	}
+	sw.ResponseWriter.WriteHeader(code)
+}
+
+func (sw *statusWriter) Write(b []byte) (int, error) {
+	if !sw.wrote {
+		sw.wrote = true
+	}
+	return sw.ResponseWriter.Write(b)
+}
+
+func (sw *statusWriter) Flush() {
+	if f, ok := sw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 //go:embed static
 var staticFS embed.FS
+
+type dirEntry struct {
+	Name  string `json:"name"`
+	Path  string `json:"path"`
+	IsDir bool   `json:"isDir"`
+}
 
 // Logger is the subset of logging the server needs.
 type Logger interface {
@@ -95,6 +159,8 @@ type Options struct {
 	RunRetention func()
 	OnStopAll    func()
 	OnStartAll   func()
+	// LogBus, if set, receives log lines from the supervisor for SSE push.
+	LogBus *LogBroadcaster
 }
 
 // Server is the embedded control panel.
@@ -102,11 +168,21 @@ type Server struct {
 	cfg  *config.File
 	opts Options
 	mux  *http.Server
+
+	recMu     sync.Mutex
+	recCache  []Recording
+	recExpiry time.Time
+
+	logBus *LogBroadcaster
 }
 
 // New builds the server for the watched config.
 func New(cfg *config.File, opts Options) *Server {
-	s := &Server{cfg: cfg, opts: opts}
+	bus := opts.LogBus
+	if bus == nil {
+		bus = NewLogBroadcaster()
+	}
+	s := &Server{cfg: cfg, opts: opts, logBus: bus}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", s.handleStatic)
 	mux.HandleFunc("GET /api/status", s.handleStatus)
@@ -121,10 +197,21 @@ func New(cfg *config.File, opts Options) *Server {
 	mux.HandleFunc("GET /api/logs", s.handleLogs)
 	mux.HandleFunc("POST /api/update", s.handleUpdate)
 	mux.HandleFunc("GET /api/devices", s.handleDevices)
+	mux.HandleFunc("GET /api/devices/{name}/formats", s.handleDeviceFormats)
+	mux.HandleFunc("GET /api/browse", s.handleBrowse)
+	mux.HandleFunc("POST /api/mkdir", s.handleMkdir)
 	mux.HandleFunc("POST /api/stop-all", s.handleStopAll)
 	mux.HandleFunc("POST /api/start-all", s.handleStartAll)
 	mux.HandleFunc("GET /api/mic-calibrate", s.handleMicCalibrate)
-	s.mux = &http.Server{Handler: mux}
+	mux.HandleFunc("GET /api/events", s.handleEvents)
+	mux.HandleFunc("GET /api/health", s.handleHealth)
+	s.mux = &http.Server{
+		Handler:           requestLogger(securityHeaders(mux)),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 	return s
 }
 
@@ -150,9 +237,15 @@ func (s *Server) Start(ctx context.Context) error {
 	return err
 }
 
+// LogBus returns the log broadcaster for pushing log lines via SSE.
+func (s *Server) LogBus() *LogBroadcaster { return s.logBus }
+
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		// Header already sent; log but can't send error to client.
+		slog.Error("web: json encode failed", "error", err)
+	}
 }
 
 func writeErr(w http.ResponseWriter, code int, msg string) {
@@ -170,10 +263,48 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	}
 	sub, err := fs.Sub(staticFS, "static")
 	if err != nil {
-		http.Error(w, "static assets unavailable", http.StatusInternalServerError)
+		writeErr(w, http.StatusInternalServerError, "static assets unavailable")
 		return
 	}
+	// index.html gets no-cache so cache-bust query strings work; everything
+	// else gets a day of browser cache since only a redeploy changes files.
+	if name == "index.html" {
+		w.Header().Set("Cache-Control", "no-cache")
+	} else {
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+	}
+	// Serve pre-compressed files from build time. Priority: brotli > zstd >
+	// gzip — all zero runtime CPU cost.
+	accept := r.Header.Get("Accept-Encoding")
+	if strings.Contains(accept, "br") {
+		if data, err := fs.ReadFile(sub, "compressed/"+name+".br"); err == nil {
+			w.Header().Set("Content-Encoding", "br")
+			w.Header().Del("Content-Length")
+			http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(data))
+			return
+		}
+	}
+	if strings.Contains(accept, "zstd") {
+		if data, err := fs.ReadFile(sub, "compressed/"+name+".zst"); err == nil {
+			w.Header().Set("Content-Encoding", "zstd")
+			w.Header().Del("Content-Length")
+			http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(data))
+			return
+		}
+	}
+	if strings.Contains(accept, "gzip") {
+		if data, err := fs.ReadFile(sub, "compressed/"+name+".gz"); err == nil {
+			w.Header().Set("Content-Encoding", "gzip")
+			w.Header().Del("Content-Length")
+			http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(data))
+			return
+		}
+	}
 	http.ServeFileFS(w, r, sub, name)
+}
+
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]string{"status": "ok"})
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -223,6 +354,9 @@ func (s *Server) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.opts.Log.Logf("web: config saved (%d bytes), hot reload picks it up on next tick", len(data))
+	s.recMu.Lock()
+	s.recExpiry = time.Time{}
+	s.recMu.Unlock()
 	writeJSON(w, map[string]string{"ok": "saved"})
 }
 
@@ -230,22 +364,147 @@ func (s *Server) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 // encoders, so the settings form can show real dropdown options.
 func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 	cfg := s.cfg.Get()
+	type encoderInfo struct {
+		Name string `json:"name"`
+		Info string `json:"info"`
+	}
 	type devResp struct {
 		Video    []mic.VideoDevice `json:"video"`
 		Audio    []mic.AudioDevice `json:"audio"`
-		Encoders []string          `json:"encoders"`
+		Encoders []encoderInfo     `json:"encoders"`
 		NVENC    bool              `json:"nvenc"`
 	}
 	resp := devResp{
-		Video:    mic.ListVideoDevices(),
-		Audio:    mic.ListAudioDevices(),
-		NVENC:    cfg.Encoders.NVENC,
-		Encoders: cfg.Encoders.CPU,
+		Video: mic.ListVideoDevices(),
+		Audio: mic.ListAudioDevices(),
+		NVENC: cfg.Encoders.NVENC,
+	}
+	nvencInfo := map[string]string{
+		"h264_nvenc": "NVIDIA GPU, H.264 — fast, great compatibility",
+		"hevc_nvenc": "NVIDIA GPU, HEVC/H.265 — smaller files, 4K-ready",
+		"av1_nvenc":  "NVIDIA GPU, AV1 — newest, best compression",
+	}
+	cpuInfo := map[string]string{
+		"libx264":   "CPU, H.264 — universal, works everywhere",
+		"libsvtav1": "CPU, AV1 — slow but best quality-per-bit",
 	}
 	if cfg.Encoders.NVENC {
-		resp.Encoders = append([]string{"h264_nvenc", "av1_nvenc", "hevc_nvenc"}, resp.Encoders...)
+		for _, name := range []string{"h264_nvenc", "av1_nvenc", "hevc_nvenc"} {
+			resp.Encoders = append(resp.Encoders, encoderInfo{Name: name, Info: nvencInfo[name]})
+		}
+	}
+	for _, name := range cfg.Encoders.CPU {
+		info := cpuInfo[name]
+		if info == "" {
+			info = "CPU encoder"
+		}
+		resp.Encoders = append(resp.Encoders, encoderInfo{Name: name, Info: info})
 	}
 	writeJSON(w, resp)
+}
+
+// handleDeviceFormats returns the resolutions and FPS ranges a video device
+// supports, queried live via ffmpeg -list_options. The frontend uses this to
+// populate resolution/FPS dropdowns with device-specific values.
+func (s *Server) handleDeviceFormats(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeErr(w, http.StatusBadRequest, "device name required")
+		return
+	}
+	formats := mic.ListDeviceFormats(name)
+	if formats == nil {
+		formats = []mic.DeviceFormat{}
+	}
+	writeJSON(w, formats)
+}
+
+// handleBrowse lists subdirectories of a path for the folder picker.
+func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
+	dir := r.URL.Query().Get("path")
+
+	// Empty path → list drives directly.
+	if dir == "" {
+		dirs := listDrives()
+		writeJSON(w, map[string]any{"path": "", "dirs": dirs})
+		return
+	}
+
+	var dirs []dirEntry
+
+	// On Windows, if we're at a root, show drives as the parent and
+	// list this drive's contents.
+	if isAtRoot(dir) {
+		// The parent of a root is the drive list.
+		dirs = append(dirs, dirEntry{
+			Name:  "..",
+			Path:  "",
+			IsDir: true,
+		})
+	} else {
+		// Add parent directory entry unless we're at filesystem root.
+		parent := filepath.Dir(dir)
+		dirs = append(dirs, dirEntry{
+			Name:  "..",
+			Path:  parent,
+			IsDir: true,
+		})
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		dirs = append(dirs, dirEntry{
+			Name:  name,
+			Path:  filepath.Join(dir, name),
+			IsDir: true,
+		})
+	}
+	writeJSON(w, map[string]any{"path": dir, "dirs": dirs})
+}
+
+func (s *Server) handleMkdir(w http.ResponseWriter, r *http.Request) {
+	dir := r.URL.Query().Get("path")
+	if dir == "" {
+		writeErr(w, http.StatusBadRequest, "path is required")
+		return
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]string{"ok": "created", "path": dir})
+}
+
+func isAtRoot(dir string) bool {
+	cleaned := filepath.Clean(dir)
+	vol := filepath.VolumeName(cleaned)
+	return cleaned == vol || cleaned == vol+string(filepath.Separator) || cleaned == string(filepath.Separator) || cleaned == ""
+}
+
+func listDrives() []dirEntry {
+	var dirs []dirEntry
+	for _, letter := range "ABCDEFGHIJKLMNOPQRSTUVWXYZ" {
+		vol := string(letter) + ":"
+		if _, err := os.Stat(vol + "\\"); err == nil {
+			dirs = append(dirs, dirEntry{
+				Name:  vol + "\\",
+				Path:  vol + "\\",
+				IsDir: true,
+			})
+		}
+	}
+	return dirs
 }
 
 func (s *Server) handleStopAll(w http.ResponseWriter, r *http.Request) {
@@ -274,11 +533,45 @@ type Recording struct {
 }
 
 func (s *Server) handleListRecordings(w http.ResponseWriter, r *http.Request) {
+	all := s.listRecordings()
+
+	offset := 0
+	limit := len(all)
+	if v := r.URL.Query().Get("offset"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			offset = n
+		}
+	}
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+
+	total := len(all)
+	if offset >= total {
+		writeJSON(w, map[string]any{"items": []Recording{}, "total": total})
+		return
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	writeJSON(w, map[string]any{"items": all[offset:end], "total": total})
+}
+
+func (s *Server) listRecordings() []Recording {
+	s.recMu.Lock()
+	if s.recCache != nil && time.Now().Before(s.recExpiry) {
+		cached := s.recCache
+		s.recMu.Unlock()
+		return cached
+	}
+	s.recMu.Unlock()
+
 	cfg := s.cfg.Get()
 	var out []Recording
 	for _, cam := range cfg.Cameras {
-		// The combined dir may hold segments from a previous combined-mode
-		// run even when the current mode is event, so always scan it.
 		dirs := []string{cam.Record.OutDir, filepath.Join(cam.Record.OutDir, "combined")}
 		for _, dir := range dirs {
 			entries, err := os.ReadDir(dir)
@@ -303,7 +596,16 @@ func (s *Server) handleListRecordings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ModTime.After(out[j].ModTime) })
-	writeJSON(w, out)
+
+	s.recMu.Lock()
+	// Only update if another goroutine didn't beat us to it.
+	if s.recCache == nil || time.Now().After(s.recExpiry) {
+		s.recCache = out
+		s.recExpiry = time.Now().Add(5 * time.Second)
+	}
+	cached := s.recCache
+	s.recMu.Unlock()
+	return cached
 }
 
 func (s *Server) handleGetRecording(w http.ResponseWriter, r *http.Request) {
@@ -382,6 +684,9 @@ func (s *Server) handleRunRetention(w http.ResponseWriter, r *http.Request) {
 	}
 	s.opts.Log.Logf("web: retention run requested")
 	s.opts.RunRetention()
+	s.recMu.Lock()
+	s.recExpiry = time.Time{}
+	s.recMu.Unlock()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -557,6 +862,60 @@ func (s *Server) stageUpdate(newExe []byte, pwsh, target string) error {
 	}
 	s.opts.Log.Logf("web: update staged (%d bytes), updater spawned", len(newExe))
 	return nil
+}
+
+// handleEvents streams server-sent events (SSE) for live config and recording
+// updates. The client connects once and receives events when config is saved
+// or recordings are finalized, replacing polling loops.
+func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeErr(w, http.StatusInternalServerError, "streaming not supported")
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	done := make(chan struct{})
+	defer close(done)
+	ch := s.cfg.Subscribe(done)
+	recCh := s.cfg.SubscribeRecordings(done)
+	logCh := s.logBus.Subscribe(done)
+	defer func() { <-done }()
+
+	// Send initial config so the client can hydrate.
+	data, _ := json.Marshal(s.cfg.Get())
+	fmt.Fprintf(w, "event: config-changed\ndata: %s\n\n", data)
+	flusher.Flush()
+
+	ctx := r.Context()
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ch:
+			data, _ := json.Marshal(s.cfg.Get())
+			fmt.Fprintf(w, "event: config-changed\ndata: %s\n\n", data)
+			flusher.Flush()
+		case <-recCh:
+			// Invalidate recording cache so next list fetch is fresh.
+			s.recMu.Lock()
+			s.recExpiry = time.Time{}
+			s.recMu.Unlock()
+			fmt.Fprintf(w, "event: recordings-changed\ndata: {}\n\n")
+			flusher.Flush()
+		case evt := <-logCh:
+			data, _ := json.Marshal(evt)
+			fmt.Fprintf(w, "event: log-line\ndata: %s\n\n", data)
+			flusher.Flush()
+		case <-ticker.C:
+			fmt.Fprintf(w, ": keepalive\n\n")
+			flusher.Flush()
+		}
+	}
 }
 
 // updateScript is the detached PowerShell helper that applies a staged

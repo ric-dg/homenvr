@@ -524,6 +524,7 @@ func (r *Recorder) runEvent(ctx context.Context) error {
 		}
 		curPath = ""
 		r.log.Logf("event ended -> %s", filepath.Base(newPath))
+		r.cfg.SignalRecording()
 	}
 
 	stopEvent := func() {

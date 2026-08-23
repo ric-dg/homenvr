@@ -164,12 +164,15 @@ func TestRecordingsListAndServe(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("GET /api/recordings = %d", rec.Code)
 	}
-	var list []Recording
-	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+	var resp struct {
+		Items []Recording `json:"items"`
+		Total int         `json:"total"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	if len(list) != 2 {
-		t.Errorf("recordings = %d, want 2 (mp4 only): %+v", len(list), list)
+	if len(resp.Items) != 2 || resp.Total != 2 {
+		t.Errorf("recordings = %d (total %d), want 2 (mp4 only): %+v", len(resp.Items), resp.Total, resp)
 	}
 
 	// Full download.

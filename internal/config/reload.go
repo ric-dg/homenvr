@@ -20,6 +20,14 @@ type File struct {
 	mu    sync.RWMutex
 	cfg   *Config
 	mtime time.Time
+
+	// notify is signaled on every successful Save so subscribers (SSE) can
+	// push the new config to connected clients without polling.
+	notify chan struct{}
+
+	// recNotify is signaled when a recording segment is finalized (created or
+	// renamed) so the web panel can refresh its recordings list via SSE.
+	recNotify chan struct{}
 }
 
 // NewFile loads path (a missing file yields defaults) and watches it.
@@ -42,7 +50,7 @@ func NewFile(path string) (*File, error) {
 			return nil, err
 		}
 	}
-	f := &File{path: path, cfg: cfg}
+	f := &File{path: path, cfg: cfg, notify: make(chan struct{}, 1), recNotify: make(chan struct{}, 1)}
 	if m := f.statMtime(); m != nil {
 		f.mtime = *m
 	}
@@ -78,6 +86,28 @@ func (f *File) Refresh() (bool, error) {
 // Path returns the watched file path.
 func (f *File) Path() string { return f.path }
 
+// Subscribe returns a channel that receives a signal every time the config is
+// saved via Save(). The channel is buffered (size 1) so a slow subscriber
+// never blocks the writer. Close the done channel to unsubscribe.
+func (f *File) Subscribe(done <-chan struct{}) <-chan struct{} {
+	ch := make(chan struct{}, 1)
+	go func() {
+		for {
+			select {
+			case <-f.notify:
+				select {
+				case ch <- struct{}{}:
+				default:
+				}
+			case <-done:
+				close(ch)
+				return
+			}
+		}
+	}()
+	return ch
+}
+
 // Save writes data to the config file and updates the backup. This is used
 // by the web panel to atomically save and keep a last-known-good copy.
 func (f *File) Save(data []byte) error {
@@ -92,7 +122,41 @@ func (f *File) Save(data []byte) error {
 	f.mu.Lock()
 	f.mtime = time.Now()
 	f.mu.Unlock()
+	// Signal subscribers (SSE) that config changed.
+	select {
+	case f.notify <- struct{}{}:
+	default:
+	}
 	return nil
+}
+
+// SubscribeRecordings returns a channel that receives a signal when a
+// recording segment is finalized. Close done to unsubscribe.
+func (f *File) SubscribeRecordings(done <-chan struct{}) <-chan struct{} {
+	ch := make(chan struct{}, 1)
+	go func() {
+		for {
+			select {
+			case <-f.recNotify:
+				select {
+				case ch <- struct{}{}:
+				default:
+				}
+			case <-done:
+				close(ch)
+				return
+			}
+		}
+	}()
+	return ch
+}
+
+// SignalRecording notifies subscribers that a recording was created/renamed.
+func (f *File) SignalRecording() {
+	select {
+	case f.recNotify <- struct{}{}:
+	default:
+	}
 }
 
 func (f *File) statMtime() *time.Time {

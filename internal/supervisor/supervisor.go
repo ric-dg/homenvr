@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,6 +18,11 @@ import (
 	"github.com/ric-dg/homenvr/internal/watchdog"
 	"github.com/ric-dg/homenvr/internal/web"
 )
+
+// LogSender is the subset of LogBroadcaster the supervisor needs.
+type LogSender interface {
+	Send(evt web.LogEvent)
+}
 
 // Supervisor owns the long-running child processes: go2rtc (whose exec
 // streams pull in ffmpeg per camera) and, in later increments, the feed
@@ -39,6 +45,8 @@ type Supervisor struct {
 	mu      sync.Mutex // guards runners
 	runners map[string]context.CancelFunc
 	paused  bool
+
+	logBus LogSender
 }
 
 // New loads the config (required) and writes the initial go2rtc.yaml.
@@ -63,6 +71,15 @@ func New(cfgPath, yamlPath string) (*Supervisor, error) {
 
 // Log exposes the service log (used by subsystems for shared logging).
 func (s *Supervisor) Log() *ServiceLog { return s.log }
+
+// SetLogBus wires the log broadcaster so service.log and alert.log lines
+// are pushed via SSE. Call before Run().
+func (s *Supervisor) SetLogBus(bus LogSender) {
+	s.logBus = bus
+	s.log.OnWrite = func(line string) {
+		bus.Send(web.LogEvent{Name: "service", Line: line})
+	}
+}
 
 // Cfg returns the current effective config.
 func (s *Supervisor) Cfg() *config.Config { return s.cfg.Get() }
@@ -113,6 +130,13 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		defer wg.Done()
 		s.runRetention(ctx)
 	}()
+	if s.logBus != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.watchGo2rtcLogs(ctx)
+		}()
+	}
 
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
@@ -135,6 +159,12 @@ func (s *Supervisor) runWatchdog(ctx context.Context) {
 	if err != nil {
 		s.log.Logf("watchdog: alert log: %v", err)
 		return
+	}
+	if s.logBus != nil {
+		bus := s.logBus
+		alert.OnWrite = func(line string) {
+			bus.Send(web.LogEvent{Name: "alert", Line: line})
+		}
 	}
 	w := watchdog.New(s.cfg, alert)
 	s.log.Logf("watchdog started")
@@ -176,6 +206,7 @@ func (s *Supervisor) retentionOnce(now time.Time) {
 		}
 	}
 	retention.Run(func(msg string) { s.log.Logf("%s", msg) }, dirs, cfg.Record.RetainHours, cfg.Record.RetainMB, now)
+	s.cfg.SignalRecording()
 }
 
 // RunRetentionNow runs the retention cleanup immediately (web panel
@@ -437,4 +468,86 @@ func (s *Supervisor) dropLowestPriority(cfg *config.Config) {
 func CollectMemoryPct() float64 {
 	sys := web.CollectSystemInfo()
 	return sys.Memory.UsedPct
+}
+
+// watchGo2rtcLogs polls go2rtc log files every 2s and pushes new lines via SSE.
+func (s *Supervisor) watchGo2rtcLogs(ctx context.Context) {
+	type tracked struct {
+		name string // SSE log name ("go2rtc" or "go2rtc.err")
+		path string // filename on disk
+		size int64
+	}
+	files := []tracked{
+		{name: "go2rtc", path: "go2rtc.out.log"},
+		{name: "go2rtc.err", path: "go2rtc.err.log"},
+	}
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		cfg := s.cfg.Get()
+		logDir := cfg.Paths.LogDir
+		for i := range files {
+			f := &files[i]
+			fullPath := filepath.Join(logDir, f.path)
+			st, err := os.Stat(fullPath)
+			if err != nil || st.Size() <= f.size {
+				continue
+			}
+			// Read new bytes.
+			data, err := tailBytes(fullPath, st.Size()-f.size)
+			if err != nil {
+				continue
+			}
+			f.size = st.Size()
+			for _, line := range splitLines(string(data)) {
+				if line != "" {
+					s.logBus.Send(web.LogEvent{Name: f.name, Line: line})
+				}
+			}
+		}
+	}
+}
+
+// tailBytes reads the last n bytes from a file.
+func tailBytes(path string, n int64) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if n > st.Size() {
+		n = st.Size()
+	}
+	if _, err := f.Seek(st.Size()-n, 0); err != nil {
+		return nil, err
+	}
+	buf := make([]byte, n)
+	_, err = f.Read(buf)
+	return buf, err
+}
+
+// splitLines splits text on newlines, dropping empty trailing segments.
+func splitLines(s string) []string {
+	var lines []string
+	for len(s) > 0 {
+		i := strings.IndexByte(s, '\n')
+		if i < 0 {
+			if s != "" {
+				lines = append(lines, s)
+			}
+			break
+		}
+		lines = append(lines, s[:i])
+		s = s[i+1:]
+	}
+	return lines
 }

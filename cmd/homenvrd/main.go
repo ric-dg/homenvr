@@ -81,6 +81,8 @@ func main() {
 	defer stop()
 
 	var restartAfter, updateAfter bool
+	logBus := web.NewLogBroadcaster()
+	svc.SetLogBus(logBus)
 	panel := web.New(svc.CfgFile(), web.Options{
 		ConfigPath:   *configPath,
 		Status:       svc,
@@ -93,6 +95,7 @@ func main() {
 		RunRetention: svc.RunRetentionNow,
 		OnStopAll:    svc.StopAll,
 		OnStartAll:   svc.StartAll,
+		LogBus:       logBus,
 	})
 	go func() {
 		if err := panel.Start(ctx); err != nil {

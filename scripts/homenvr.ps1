@@ -65,12 +65,22 @@ switch ($Command.ToLower()) {
 
     { $_ -in 'restart', 'deploy' } {
         if ($_ -eq 'deploy') {
+            # Pre-compress static files with gzip/brotli/zstd so the server
+            # serves them with zero runtime CPU cost.
+            $staticDir = Join-Path $root 'internal\web\static'
+            Push-Location $root
+            try { go run ./cmd/compress-static $staticDir } finally { Pop-Location }
+
             $staged = Join-Path $env:TEMP 'homenvr-deploy\homenvrd.exe'
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $staged) | Out-Null
             Push-Location $root
             try { & go build -ldflags "-H windowsgui" -o $staged ./cmd/homenvrd } finally { Pop-Location }
             if ($LASTEXITCODE -ne 0) { Write-Host 'go build failed - is Go on PATH?' -ForegroundColor Red; exit 1 }
             Write-Host "built $staged"
+
+            # Clean up compressed files (already embedded in the binary)
+            Remove-Item -Recurse -Force (Join-Path $staticDir 'compressed') -ErrorAction SilentlyContinue
+
             $newExe = @('-NewExe', $staged)
         } else { $newExe = @() }
 

@@ -2,7 +2,9 @@ package mic
 
 import (
 	"os/exec"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 )
 
@@ -90,4 +92,77 @@ func parseDshowDevices(output string) []VideoDevice {
 		}
 	}
 	return devs
+}
+
+// DeviceFormat reports one resolution/FPS combination a DirectShow device supports.
+type DeviceFormat struct {
+	Width  int     `json:"width"`
+	Height int     `json:"height"`
+	MinFPS float64 `json:"min_fps"`
+	MaxFPS float64 `json:"max_fps"`
+}
+
+// dshowOptionRe matches lines like:
+//
+//	pixel_format=yuyv422  min s=1280x720 fps=30 max s=1280x720 fps=30
+var dshowOptionRe = regexp.MustCompile(
+	`min\s+s=(\d+)x(\d+)\s+fps=([\d.]+)\s+max\s+s=(\d+)x(\d+)\s+fps=([\d.]+)`)
+
+// ListDeviceFormats queries ffmpeg for the resolutions and FPS ranges a
+// DirectShow video device supports. Returns nil on failure or non-Windows.
+func ListDeviceFormats(device string) []DeviceFormat {
+	if runtime.GOOS != "windows" || device == "" {
+		return nil
+	}
+	ff := "ffmpeg"
+	if v, err := exec.LookPath("ffmpeg"); err == nil {
+		ff = v
+	}
+	out, err := exec.Command(ff, "-hide_banner", "-f", "dshow",
+		"-list_options", "true", "-i", "video="+device).CombinedOutput()
+	if err != nil {
+		return nil
+	}
+	return parseDshowFormats(string(out))
+}
+
+func parseDshowFormats(output string) []DeviceFormat {
+	seen := map[string]bool{}
+	var formats []DeviceFormat
+	for _, line := range strings.Split(output, "\n") {
+		m := dshowOptionRe.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		w1, _ := strconv.Atoi(m[1])
+		h1, _ := strconv.Atoi(m[2])
+		minFPS, _ := strconv.ParseFloat(m[3], 64)
+		w2, _ := strconv.Atoi(m[4])
+		h2, _ := strconv.Atoi(m[5])
+		maxFPS, _ := strconv.ParseFloat(m[6], 64)
+		if w1 != w2 || h1 != h2 {
+			continue //跨分辨率行跳过（不应出现）
+		}
+		key := strconv.Itoa(w1) + "x" + strconv.Itoa(h1)
+		if seen[key] {
+			// 同分辨率取最大FPS范围
+			for i := range formats {
+				if formats[i].Width == w1 && formats[i].Height == h1 {
+					if minFPS < formats[i].MinFPS {
+						formats[i].MinFPS = minFPS
+					}
+					if maxFPS > formats[i].MaxFPS {
+						formats[i].MaxFPS = maxFPS
+					}
+					break
+				}
+			}
+			continue
+		}
+		seen[key] = true
+		formats = append(formats, DeviceFormat{
+			Width: w1, Height: h1, MinFPS: minFPS, MaxFPS: maxFPS,
+		})
+	}
+	return formats
 }

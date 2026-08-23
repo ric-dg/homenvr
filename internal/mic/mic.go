@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -77,6 +78,7 @@ func New(cfg *config.File, name string, log Logger, ffmpeg, logDir string) *Feed
 
 // Run feeds PCM until ctx is cancelled or the camera disappears from config.
 func (f *Feeder) Run(ctx context.Context) {
+	runtime.LockOSThread()
 	f.log.Logf("mic capture [%s] starting", f.name)
 	defer close(f.quit)
 	go func() {

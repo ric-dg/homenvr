@@ -60,7 +60,7 @@ type GPU struct {
 type Video struct {
 	Codec   string `json:"codec"`
 	Preset  string `json:"preset"`
-	Tune    string `json:"tune,omitempty"`
+	Tune    string `json:"tune"`
 	RC      string `json:"rc"`
 	CQ      int    `json:"cq"`
 	CRF     int    `json:"crf"`
@@ -79,7 +79,7 @@ type Live struct {
 	Audio Audio `json:"audio"`
 	// HLS enables go2rtc HLS output for this camera (e.g. iPhone/Safari
 	// playback). Adds "hls: true" to the generated go2rtc.yaml.
-	HLS bool `json:"hls,omitempty"`
+	HLS bool `json:"hls"`
 }
 
 type Mic struct {
@@ -174,8 +174,8 @@ type Camera struct {
 	Sound      Sound     `json:"sound"`
 	Record     CamRecord `json:"record"`
 	Image      Image     `json:"image"`
-	Priority   int       `json:"priority,omitempty"`
-	Detection  string    `json:"detection,omitempty"`
+	Priority   int       `json:"priority"`
+	Detection  string    `json:"detection"`
 }
 
 type Image struct {

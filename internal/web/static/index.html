@@ -4,27 +4,27 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>HomeNVR</title>
-<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/style.css?v=11">
 </head>
 <body>
 <header>
   <h1>HomeNVR</h1>
-  <nav>
-    <button class="tab active" data-tab="status">Status</button>
-    <button class="tab" data-tab="recordings">Recordings</button>
-    <button class="tab" data-tab="logs">Logs</button>
-    <button class="tab" data-tab="config">Config</button>
+  <nav role="tablist" aria-label="Main navigation">
+    <button class="tab active" id="tab-btn-status" data-tab="status" role="tab" aria-selected="true" aria-controls="tab-status">Status</button>
+    <button class="tab" id="tab-btn-recordings" data-tab="recordings" role="tab" aria-selected="false" aria-controls="tab-recordings">Recordings</button>
+    <button class="tab" id="tab-btn-logs" data-tab="logs" role="tab" aria-selected="false" aria-controls="tab-logs">Logs</button>
+    <button class="tab" id="tab-btn-config" data-tab="config" role="tab" aria-selected="false" aria-controls="tab-config">Config</button>
   </nav>
   <a class="live" target="_blank" rel="noopener" href="#" id="live-link">Live view</a>
 </header>
 
 <main>
-  <section id="tab-status" class="panel active"></section>
-  <section id="tab-recordings" class="panel">
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+  <section id="tab-status" class="panel active" role="tabpanel" aria-labelledby="tab-btn-status"></section>
+  <section id="tab-recordings" class="panel" role="tabpanel" aria-labelledby="tab-btn-recordings">
     <div id="rec-list"></div>
-    <video id="player" controls hidden></video>
   </section>
-  <section id="tab-logs" class="panel">
+  <section id="tab-logs" class="panel" role="tabpanel" aria-labelledby="tab-btn-logs">
     <div class="card">
       <div class="toolbar">
         <select id="log-name">
@@ -45,16 +45,15 @@
         <button id="cfg-save">Save &amp; reload</button>
         <button id="cfg-reload" class="secondary">Revert</button>
         <span id="unsaved-dot" class="unsaved-dot" hidden title="Unsaved changes"></span>
-        <span id="cfg-msg"></span>
       </div>
       <div class="toolbar-right">
-        <button id="cfg-export" class="secondary toggle-btn" onclick="">Export</button>
-        <button id="cfg-import" class="secondary toggle-btn" onclick="">Import</button>
+        <button id="cfg-export" class="secondary toggle-btn">Export</button>
+        <button id="cfg-import" class="secondary toggle-btn">Import</button>
         <div class="view-toggle">
-          <button id="cfg-view-form" class="toggle-btn active" onclick="">Form</button>
-          <button id="cfg-view-raw" class="toggle-btn" onclick="">Raw</button>
+          <button id="cfg-view-form" class="toggle-btn active">Form</button>
+          <button id="cfg-view-raw" class="toggle-btn">Raw</button>
         </div>
-        <button id="cfg-adv-toggle" class="secondary toggle-btn" onclick="">Advanced</button>
+        <button id="cfg-adv-toggle" class="secondary toggle-btn">Advanced</button>
       </div>
     </div>
     <div id="cfg-form"></div>
@@ -64,6 +63,6 @@
   </section>
 </main>
 
-<script src="/app.js"></script>
+<script src="/app.js?v=9"></script>
 </body>
 </html>

@@ -18,6 +18,10 @@ type ServiceLog struct {
 	f    *os.File
 	max  int64
 	keep int
+
+	// OnWrite, if set, is called with each new log line after it is written.
+	// The string is the formatted "YYYY-MM-DD HH:MM:SS  message" line.
+	OnWrite func(string)
 }
 
 // NewServiceLog opens (creating if needed) service.log under dir.
@@ -70,8 +74,12 @@ func (l *ServiceLog) Logf(format string, args ...any) {
 		return
 	}
 	ts := time.Now().Format("2006-01-02 15:04:05")
-	fmt.Fprintf(l.f, "%s  %s\n", ts, msg)
+	line := fmt.Sprintf("%s  %s", ts, msg)
+	fmt.Fprintln(l.f, line)
 	l.rotateLocked()
+	if l.OnWrite != nil {
+		l.OnWrite(line)
+	}
 }
 
 // Dir returns the current log directory.

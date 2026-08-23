@@ -272,7 +272,13 @@ func (c *iAudioCaptureClient) getNextPacketSize(frames *uint32) uint32 {
 }
 
 func (c *iAudioCaptureClient) getBuffer(data **byte, frames *uint32) uint32 {
-	r, _, _ := syscall.SyscallN(c.lpVtbl.getBuffer, uintptr(unsafe.Pointer(c)), uintptr(unsafe.Pointer(data)), uintptr(unsafe.Pointer(frames)))
+	var flags uint32
+	r, _, _ := syscall.SyscallN(c.lpVtbl.getBuffer,
+		uintptr(unsafe.Pointer(c)),
+		uintptr(unsafe.Pointer(data)),
+		uintptr(unsafe.Pointer(frames)),
+		uintptr(unsafe.Pointer(&flags)),
+		0, 0) // pu64DevicePosition, pu64QPCPosition = NULL
 	return uint32(r)
 }
 
@@ -520,7 +526,15 @@ func (s *wasapiSrc) readBlock(buf []byte) error {
 		s.mu.Unlock()
 
 		var handles [2]uintptr = [2]uintptr{uintptr(s.evData), uintptr(s.evStop)}
-		waitForMultipleObjs.Call(2, uintptr(unsafe.Pointer(&handles[0])), 0, infinite)
+		r, _, _ := waitForMultipleObjs.Call(2, uintptr(unsafe.Pointer(&handles[0])), 0, 5000)
+		if r == 258 { // WAIT_TIMEOUT
+			s.mu.Lock()
+			closed := s.closed
+			s.mu.Unlock()
+			if closed {
+				return fmt.Errorf("mic capture closed")
+			}
+		}
 	}
 }
 
@@ -532,7 +546,8 @@ func (s *wasapiSrc) drain() error {
 			return fmt.Errorf("capture client invalidated")
 		}
 		var frames uint32
-		if hr := s.cap.getNextPacketSize(&frames); hr != 0 || frames == 0 {
+		hr := s.cap.getNextPacketSize(&frames)
+		if hr != 0 || frames == 0 {
 			break
 		}
 		if s.cap == nil || s.cap.lpVtbl == nil {
